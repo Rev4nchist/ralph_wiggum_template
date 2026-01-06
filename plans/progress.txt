@@ -114,3 +114,28 @@
 
 ---
 
+### 2026-01-06 - Iteration 5
+**Task:** task-005 - Add test suite for string utilities
+**Status:** COMPLETE ✓
+
+**Actions Taken:**
+- Created tests/strings.test.ts with comprehensive Jest test suite
+- Implemented 20 test cases total across all three string utility methods:
+  - reverse: 5 tests (simple string, string with spaces, empty string, single character, special characters)
+  - capitalize: 7 tests (single word, multiple words, already capitalized, mixed case, empty string, multiple spaces, single character)
+  - wordCount: 8 tests (simple sentence, single word, empty string, whitespace-only, multiple spaces, leading/trailing spaces, many words, tabs/newlines)
+- All edge cases covered: empty strings, whitespace-only strings, special characters, multiple spaces, tabs/newlines as whitespace
+- Ran `npm test` successfully - all 38 tests pass (18 calculator + 20 strings = 38/38 green)
+- Verified `npm run build` still succeeds without errors
+
+**Acceptance Criteria Met:**
+- ✓ tests/strings.test.ts exists
+- ✓ All string functions have test coverage (reverse: 5 tests, capitalize: 7 tests, wordCount: 8 tests)
+- ✓ Empty string edge cases handled (empty string, whitespace-only tested across all methods)
+- ✓ npm test passes with all tests green (38/38 passed)
+
+**Next Steps:**
+- All PRD tasks (task-001 through task-005) are now complete
+
+---
+
