@@ -83,3 +83,34 @@
 
 ---
 
+### 2026-01-06 - Iteration 4
+**Task:** task-004 - Add string utility module with reverse, capitalize, and wordCount
+**Status:** COMPLETE ✓
+
+**Actions Taken:**
+- Created src/strings.ts with StringUtils class
+- Implemented reverse(str: string): string method using split('').reverse().join('')
+- Implemented capitalize(str: string): string method that:
+  - Splits string on spaces
+  - Capitalizes first letter of each word using charAt(0).toUpperCase()
+  - Lowercases remaining letters using slice(1).toLowerCase()
+  - Handles empty strings and empty words
+- Implemented wordCount(str: string): number method that:
+  - Returns 0 for empty/whitespace-only strings
+  - Trims and splits on whitespace using regex /\s+/
+  - Returns accurate count of words
+- All methods properly typed with string parameters and appropriate return types
+- Verified `npm run build` succeeds without errors
+- Verified all existing tests (18 calculator tests) still pass
+
+**Acceptance Criteria Met:**
+- ✓ src/strings.ts exports StringUtils class
+- ✓ reverse() reverses any string correctly
+- ✓ capitalize() capitalizes first letter of each word
+- ✓ wordCount() returns accurate word count
+
+**Next Steps:**
+- Ready to proceed with task-005 (Test suite for string utilities)
+
+---
+
