@@ -1,0 +1,61 @@
+{
+  "name": "Ralph Wiggum Autonomous Dev Environment",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "args": {
+      "NODE_VERSION": "20",
+      "CLAUDE_CODE_VERSION": "latest"
+    }
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": true,
+      "configureZshAsDefaultShell": true,
+      "installOhMyZsh": true,
+      "username": "node"
+    },
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.vscode-typescript-next",
+        "esbenp.prettier-vscode",
+        "dbaeumer.vscode-eslint"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "zsh"
+      }
+    }
+  },
+  "mounts": [
+    "source=ralph-commandhistory,target=/commandhistory,type=volume",
+    "source=ralph-claude-config,target=/home/node/.claude,type=volume",
+    "source=ralph-claude-mem-data,target=/home/node/.claude-mem,type=volume",
+    "source=ralph-librarian-data,target=/home/node/.librarian,type=volume"
+  ],
+  "runArgs": [
+    "--cap-add=NET_ADMIN",
+    "--cap-add=NET_RAW"
+  ],
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "postStartCommand": "sudo /usr/local/bin/init-firewall.sh",
+  "remoteUser": "node",
+  "containerEnv": {
+    "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY}",
+    "TELEGRAM_BOT_TOKEN": "${localEnv:TELEGRAM_BOT_TOKEN}",
+    "TELEGRAM_CHAT_ID": "${localEnv:TELEGRAM_CHAT_ID}"
+  },
+  "forwardPorts": [37777, 3000],
+  "portsAttributes": {
+    "37777": {
+      "label": "Claude-Mem UI",
+      "onAutoForward": "notify"
+    },
+    "3000": {
+      "label": "Dev Server",
+      "onAutoForward": "openBrowser"
+    }
+  }
+}

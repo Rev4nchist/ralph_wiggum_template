@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+*.log
+.env
+.env.local
+plans/.telegram_response
+plans/metrics.csv
+.DS_Store
+*.swp
+*.swo

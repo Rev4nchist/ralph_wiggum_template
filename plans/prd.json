@@ -1,0 +1,77 @@
+[
+  {
+    "id": "task-001",
+    "category": "setup",
+    "priority": 1,
+    "description": "Initialize TypeScript project with basic structure",
+    "acceptance_criteria": [
+      "package.json exists with typescript dependency",
+      "tsconfig.json configured for strict mode",
+      "src/index.ts exists with hello world function",
+      "npm run build succeeds without errors"
+    ],
+    "dependencies": [],
+    "passes": true,
+    "notes": "Created src/index.ts with helloWorld() function. Build succeeds and generates dist/ output with declarations, source maps."
+  },
+  {
+    "id": "task-002",
+    "category": "feature",
+    "priority": 2,
+    "description": "Create a simple calculator module with add, subtract, multiply, divide",
+    "acceptance_criteria": [
+      "src/calculator.ts exports Calculator class",
+      "All four operations implemented correctly",
+      "Division by zero throws appropriate error",
+      "Functions are properly typed"
+    ],
+    "dependencies": ["task-001"],
+    "passes": false,
+    "notes": ""
+  },
+  {
+    "id": "task-003",
+    "category": "testing",
+    "priority": 3,
+    "description": "Add test suite for calculator module",
+    "acceptance_criteria": [
+      "tests/calculator.test.ts exists",
+      "All operations have at least 2 test cases",
+      "Edge cases tested (division by zero, negative numbers)",
+      "npm test passes with 100% of tests green"
+    ],
+    "dependencies": ["task-002"],
+    "passes": false,
+    "notes": ""
+  },
+  {
+    "id": "task-004",
+    "category": "feature",
+    "priority": 4,
+    "description": "Add string utility module with reverse, capitalize, and wordCount",
+    "acceptance_criteria": [
+      "src/strings.ts exports StringUtils class",
+      "reverse() reverses any string correctly",
+      "capitalize() capitalizes first letter of each word",
+      "wordCount() returns accurate word count"
+    ],
+    "dependencies": ["task-001"],
+    "passes": false,
+    "notes": ""
+  },
+  {
+    "id": "task-005",
+    "category": "testing",
+    "priority": 5,
+    "description": "Add test suite for string utilities",
+    "acceptance_criteria": [
+      "tests/strings.test.ts exists",
+      "All string functions have test coverage",
+      "Empty string edge cases handled",
+      "npm test passes with all tests green"
+    ],
+    "dependencies": ["task-004"],
+    "passes": false,
+    "notes": ""
+  }
+]
