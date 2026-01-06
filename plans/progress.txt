@@ -57,3 +57,29 @@
 
 ---
 
+### 2026-01-06 - Iteration 3
+**Task:** task-003 - Add test suite for calculator module
+**Status:** COMPLETE ✓
+
+**Actions Taken:**
+- Created tests/calculator.test.ts with comprehensive Jest test suite
+- Implemented 18 test cases total across all four operations:
+  - add: 4 tests (positive, negative, mixed, zero)
+  - subtract: 4 tests (positive, negative result, negative numbers, zero)
+  - multiply: 4 tests (positive, zero, negative, mixed)
+  - divide: 6 tests (positive, decimal result, negative, mixed, divide by zero error, zero by zero error)
+- All edge cases covered: division by zero throws error, negative numbers, zero handling
+- Ran `npm test` successfully - all 18 tests pass (100% green)
+- Verified `npm run build` still succeeds
+
+**Acceptance Criteria Met:**
+- ✓ tests/calculator.test.ts exists
+- ✓ All operations have at least 2 test cases (each has 4+ tests)
+- ✓ Edge cases tested (division by zero with error throwing, negative numbers throughout)
+- ✓ npm test passes with 100% of tests green (18/18 passed)
+
+**Next Steps:**
+- Ready to proceed with task-004 (String utility module)
+
+---
+
