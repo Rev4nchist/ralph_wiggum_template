@@ -68,6 +68,11 @@ for ip in $(dig +short api.telegram.org); do
     ipset add allowed_hosts $ip 2>/dev/null || true
 done
 
+# Whitelist: OpenRouter API (for model routing)
+for ip in $(dig +short openrouter.ai api.openrouter.ai); do
+    ipset add allowed_hosts $ip 2>/dev/null || true
+done
+
 # Allow traffic to whitelisted IPs
 iptables -A OUTPUT -m set --match-set allowed_hosts dst -j ACCEPT
 

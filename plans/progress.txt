@@ -33,3 +33,27 @@
 
 ---
 
+### 2026-01-06 - Iteration 2
+**Task:** task-002 - Create a simple calculator module with add, subtract, multiply, divide
+**Status:** COMPLETE ✓
+
+**Actions Taken:**
+- Created src/calculator.ts with Calculator class
+- Implemented add(a, b) method returning sum of two numbers
+- Implemented subtract(a, b) method returning difference
+- Implemented multiply(a, b) method returning product
+- Implemented divide(a, b) method with division by zero error handling
+- All methods properly typed with number parameters and number return types
+- Verified build succeeds without errors
+
+**Acceptance Criteria Met:**
+- ✓ src/calculator.ts exports Calculator class
+- ✓ All four operations implemented correctly
+- ✓ Division by zero throws appropriate error ('Cannot divide by zero')
+- ✓ Functions are properly typed
+
+**Next Steps:**
+- Ready to proceed with task-003 (Test suite for calculator)
+
+---
+
