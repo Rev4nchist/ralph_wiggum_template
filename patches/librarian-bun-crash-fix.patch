@@ -1,0 +1,97 @@
+--- Librarian Bun Crash Fix Patch ---
+# Fixes sqlite-vec INSERT OR REPLACE issue and llama-addon resource cleanup
+# Apply to @iannuttall/librarian after npm install
+#
+# Root Causes Fixed:
+# 1. sqlite-vec vec0 tables don't support INSERT OR REPLACE (GitHub issue #127)
+# 2. llama-addon.node resources not disposed before process exit
+#
+# Files Modified:
+# - src/store/embeddings.ts
+# - src/llm/embed.ts
+# - src/cli/embed.ts
+# - src/services/search-run.ts
+
+================================================================================
+FILE: src/store/embeddings.ts
+================================================================================
+--- ORIGINAL
++++ PATCHED
+@@ -10,8 +10,17 @@ export function markChunkEmbedded(db: Database, chunkId: number, model: string):
+ }
+
+ export function insertEmbedding(db: Database, chunkId: number, embedding: Float32Array, model: string): void {
+-  db.prepare("INSERT OR REPLACE INTO vectors_vec (chunk_id, embedding) VALUES (?, ?)").run(chunkId, embedding);
++  // vec0 virtual tables don't support INSERT OR REPLACE - must DELETE first then INSERT
++  // See: https://github.com/asg017/sqlite-vec/issues/127
++  try {
++    db.prepare("DELETE FROM vectors_vec WHERE chunk_id = ?").run(chunkId);
++    db.prepare("INSERT INTO vectors_vec (chunk_id, embedding) VALUES (?, ?)").run(chunkId, embedding);
++  } catch (error) {
++    // If insert fails (e.g., table doesn't exist yet), log and continue
++    const message = error instanceof Error ? error.message : String(error);
++    if (!message.includes("no such table")) {
++      console.error(`Failed to insert embedding for chunk ${chunkId}: ${message}`);
++    }
++    throw error;
++  }
+   markChunkEmbedded(db, chunkId, model);
+ }
+
+================================================================================
+FILE: src/llm/embed.ts (ADD after line 12, after modelUri declaration)
+================================================================================
++++ ADD THIS FUNCTION
++
++// Cleanup function to properly dispose llama resources before exit
++// Prevents segfault in llama-addon.node during Bun shutdown
++export async function disposeEmbedding(): Promise<void> {
++  if (embedContext) {
++    try {
++      await embedContext.dispose();
++    } catch { /* ignore cleanup errors */ }
++    embedContext = null;
++  }
++  if (embedModel) {
++    try {
++      await embedModel.dispose();
++    } catch { /* ignore cleanup errors */ }
++    embedModel = null;
++  }
++  if (llamaInstance) {
++    try {
++      await llamaInstance.dispose();
++    } catch { /* ignore cleanup errors */ }
++    llamaInstance = null;
++  }
++}
+
+================================================================================
+FILE: src/cli/embed.ts
+================================================================================
+--- ORIGINAL (line 18)
++++ PATCHED
+-import { embedText, formatDocForEmbedding, getDefaultEmbedModel, type EmbeddingUsage } from "../llm/embed";
++import { embedText, formatDocForEmbedding, getDefaultEmbedModel, disposeEmbedding, type EmbeddingUsage } from "../llm/embed";
+
+--- ORIGINAL (before "if (totalQueued === 0)")
++++ PATCHED (add before that check)
++  // Dispose llama resources to prevent segfault on exit
++  await disposeEmbedding();
+
+================================================================================
+FILE: src/services/search-run.ts
+================================================================================
+--- ORIGINAL (line 8)
++++ PATCHED
++import { disposeEmbedding } from "../llm/embed";
+
+--- ORIGINAL (in finally block after libraryStore.close())
++++ PATCHED
+   } finally {
+     libraryStore.close();
++    // Dispose llama resources to prevent segfault on exit after vector/hybrid search
++    await disposeEmbedding();
+   }
+
+================================================================================
