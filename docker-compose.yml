@@ -1,0 +1,158 @@
+# Ralph Wiggum Multi-Agent Orchestration
+# Phase 1: Infrastructure with Redis message bus
+
+version: '3.8'
+
+services:
+  # Redis - Central message bus for agent coordination
+  redis:
+    image: redis:7-alpine
+    container_name: ralph-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - ralph-redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - ralph-network
+    restart: unless-stopped
+
+  # Agent 1: Frontend specialist
+  agent-frontend:
+    build:
+      context: .devcontainer
+      dockerfile: Dockerfile
+    container_name: ralph-agent-frontend
+    environment:
+      - RALPH_AGENT_ID=agent-frontend
+      - RALPH_AGENT_TYPE=frontend
+      - RALPH_SPECIALIST_MODES=implement,debug,review,test
+      - REDIS_URL=redis://redis:6379
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-z-ai/glm-4.7}
+      - ANTHROPIC_SMALL_FAST_MODEL=${ANTHROPIC_SMALL_FAST_MODEL:-minimax/minimax-m2.1}
+      - USE_OPENROUTER=${USE_OPENROUTER:-true}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+    volumes:
+      - ./projects/frontend:/workspace
+      - ralph-shared-artifacts:/shared/artifacts
+      - ralph-agent-frontend-claude:/home/node/.claude
+      - ralph-agent-frontend-history:/commandhistory
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - ralph-network
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+
+  # Agent 2: Backend specialist
+  agent-backend:
+    build:
+      context: .devcontainer
+      dockerfile: Dockerfile
+    container_name: ralph-agent-backend
+    environment:
+      - RALPH_AGENT_ID=agent-backend
+      - RALPH_AGENT_TYPE=backend
+      - RALPH_SPECIALIST_MODES=implement,debug,review,test,security
+      - REDIS_URL=redis://redis:6379
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-z-ai/glm-4.7}
+      - ANTHROPIC_SMALL_FAST_MODEL=${ANTHROPIC_SMALL_FAST_MODEL:-minimax/minimax-m2.1}
+      - USE_OPENROUTER=${USE_OPENROUTER:-true}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+    volumes:
+      - ./projects/backend:/workspace
+      - ralph-shared-artifacts:/shared/artifacts
+      - ralph-agent-backend-claude:/home/node/.claude
+      - ralph-agent-backend-history:/commandhistory
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - ralph-network
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+
+  # Agent 3: Full-stack / integration specialist
+  agent-integration:
+    build:
+      context: .devcontainer
+      dockerfile: Dockerfile
+    container_name: ralph-agent-integration
+    environment:
+      - RALPH_AGENT_ID=agent-integration
+      - RALPH_AGENT_TYPE=integration
+      - RALPH_SPECIALIST_MODES=implement,debug,review,test,docs
+      - REDIS_URL=redis://redis:6379
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-z-ai/glm-4.7}
+      - ANTHROPIC_SMALL_FAST_MODEL=${ANTHROPIC_SMALL_FAST_MODEL:-minimax/minimax-m2.1}
+      - USE_OPENROUTER=${USE_OPENROUTER:-true}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+    volumes:
+      - ./projects/integration:/workspace
+      - ralph-shared-artifacts:/shared/artifacts
+      - ralph-agent-integration-claude:/home/node/.claude
+      - ralph-agent-integration-history:/commandhistory
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - ralph-network
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+
+  # Redis Commander - Web UI for debugging (optional, dev only)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: ralph-redis-ui
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    networks:
+      - ralph-network
+    profiles:
+      - debug
+
+networks:
+  ralph-network:
+    driver: bridge
+    name: ralph-network
+
+volumes:
+  ralph-redis-data:
+  ralph-shared-artifacts:
+  ralph-agent-frontend-claude:
+  ralph-agent-frontend-history:
+  ralph-agent-backend-claude:
+  ralph-agent-backend-history:
+  ralph-agent-integration-claude:
+  ralph-agent-integration-history:

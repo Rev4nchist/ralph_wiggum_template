@@ -6,6 +6,32 @@ set -e
 # Integrates: PRD tracking, Claude-Mem context, Librarian docs, Telegram comms
 # =============================================================================
 
+# Load environment variables from .env if present
+if [ -f ".env" ]; then
+    source .env
+fi
+
+# =============================================================================
+# OpenRouter Model Configuration
+# =============================================================================
+# Set these to use OpenRouter instead of direct Anthropic API
+# Models: z-ai/glm-4.7 (workhorse), minimax/minimax-m2.1 (fast), anthropic/claude-opus-4.5 (planning)
+
+USE_OPENROUTER=${USE_OPENROUTER:-true}
+
+if [ "$USE_OPENROUTER" = "true" ] && [ -n "$OPENROUTER_API_KEY" ]; then
+    export ANTHROPIC_BASE_URL="https://openrouter.ai/api/v1"
+    export ANTHROPIC_AUTH_TOKEN="$OPENROUTER_API_KEY"
+    export ANTHROPIC_API_KEY=""
+    # Workhorse model for most execution tasks
+    export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-z-ai/glm-4.7}"
+    # Fast model for quick operations
+    export ANTHROPIC_SMALL_FAST_MODEL="${ANTHROPIC_SMALL_FAST_MODEL:-minimax/minimax-m2.1}"
+    ROUTER_MODE="OpenRouter ($ANTHROPIC_MODEL)"
+else
+    ROUTER_MODE="Direct Anthropic API"
+fi
+
 # Configuration
 MAX_ITERATIONS=${1:-20}
 COMPLETION_PROMISE="<PROMISE>COMPLETE</PROMISE>"
@@ -68,7 +94,14 @@ log_metric() {
 check_prerequisites() {
     log "Checking prerequisites..."
 
-    if ! command -v claude &> /dev/null; then
+    # Prefer ccr (Claude Code Router) for model routing, fallback to claude
+    if command -v ccr &> /dev/null; then
+        CLAUDE_CMD="ccr code"
+        log "Using Claude Code Router (ccr) for model routing"
+    elif command -v claude &> /dev/null; then
+        CLAUDE_CMD="claude"
+        log "Using Claude Code directly (ccr not found)"
+    else
         error "Claude Code not found. Install with: npm install -g @anthropic-ai/claude-code"
         exit 1
     fi
@@ -186,9 +219,14 @@ main() {
     log "=========================================="
     log "Starting Ralph Wiggum Loop"
     log "Max iterations: $MAX_ITERATIONS"
+    log "Model: $ROUTER_MODE"
+    if [ "$USE_OPENROUTER" = "true" ]; then
+        log "Main model: $ANTHROPIC_MODEL"
+        log "Fast model: $ANTHROPIC_SMALL_FAST_MODEL"
+    fi
     log "=========================================="
 
-    notify "🚀 Ralph Wiggum starting ($MAX_ITERATIONS iterations max)"
+    notify "🚀 Ralph starting ($ROUTER_MODE, $MAX_ITERATIONS iterations)"
 
     for ((i=1; i<=MAX_ITERATIONS; i++)); do
         log "=========================================="
@@ -202,7 +240,8 @@ main() {
 
         # Run Claude with the prompt
         # Using --dangerously-skip-permissions for unattended operation
-        OUTPUT=$(claude --dangerously-skip-permissions -p "$PROMPT" 2>&1) || true
+        # Uses ccr (Claude Code Router) if available for model routing
+        OUTPUT=$($CLAUDE_CMD --dangerously-skip-permissions -p "$PROMPT" 2>&1) || true
 
         END_TIME=$(date +%s)
         DURATION=$((END_TIME - START_TIME))
@@ -274,7 +313,7 @@ main() {
 if [ "$1" = "--once" ]; then
     check_prerequisites
     PROMPT=$(build_prompt 1)
-    claude --dangerously-skip-permissions -p "$PROMPT"
+    $CLAUDE_CMD --dangerously-skip-permissions -p "$PROMPT"
     exit $?
 fi
 

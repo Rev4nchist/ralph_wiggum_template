@@ -1,0 +1,103 @@
+{
+  "version": "1.0",
+  "globals": {
+    "timeout_default": 60,
+    "continue_on_warning": true
+  },
+  "hooks": [
+    {
+      "name": "security-scan",
+      "trigger": "pre-commit",
+      "command": "python -m lib.hooks.builtin.security_scan",
+      "description": "Scan for secrets and vulnerabilities",
+      "enabled": true,
+      "blocking": true,
+      "timeout": 30,
+      "on_failure": "abort"
+    },
+    {
+      "name": "file-protection",
+      "trigger": "pre-edit",
+      "command": "python -m lib.hooks.builtin.file_protection ${FILE}",
+      "description": "Check file lock before editing",
+      "enabled": true,
+      "blocking": true,
+      "timeout": 5,
+      "on_failure": "abort"
+    },
+    {
+      "name": "auto-format-ts",
+      "trigger": "post-edit",
+      "command": "npx prettier --write ${FILE}",
+      "description": "Format TypeScript/JavaScript after editing",
+      "enabled": true,
+      "blocking": false,
+      "timeout": 10,
+      "file_patterns": ["*.ts", "*.tsx", "*.js", "*.jsx"],
+      "on_failure": "warn"
+    },
+    {
+      "name": "auto-format-json",
+      "trigger": "post-edit",
+      "command": "npx prettier --write ${FILE}",
+      "description": "Format JSON after editing",
+      "enabled": true,
+      "blocking": false,
+      "timeout": 10,
+      "file_patterns": ["*.json"],
+      "exclude_patterns": ["package-lock.json"],
+      "on_failure": "warn"
+    },
+    {
+      "name": "lint-staged",
+      "trigger": "pre-commit",
+      "command": "npm run lint -- --fix",
+      "description": "Run linter before commit",
+      "enabled": true,
+      "blocking": true,
+      "timeout": 60,
+      "on_failure": "abort"
+    },
+    {
+      "name": "type-check",
+      "trigger": "pre-commit",
+      "command": "npm run typecheck 2>/dev/null || npm run build",
+      "description": "TypeScript type checking",
+      "enabled": true,
+      "blocking": true,
+      "timeout": 120,
+      "file_patterns": ["*.ts", "*.tsx"],
+      "on_failure": "abort"
+    },
+    {
+      "name": "test-verify",
+      "trigger": "task-complete",
+      "command": "npm test -- --passWithNoTests",
+      "description": "Run tests after task completion",
+      "enabled": true,
+      "blocking": true,
+      "timeout": 300,
+      "on_failure": "warn"
+    },
+    {
+      "name": "build-verify",
+      "trigger": "task-complete",
+      "command": "npm run build",
+      "description": "Verify build succeeds after task",
+      "enabled": true,
+      "blocking": true,
+      "timeout": 180,
+      "on_failure": "abort"
+    },
+    {
+      "name": "notify-failure",
+      "trigger": "task-fail",
+      "command": "echo 'Task failed: ${TASK_ID}' && ./plans/notify.sh error 'Task ${TASK_ID} failed'",
+      "description": "Notify on task failure",
+      "enabled": true,
+      "blocking": false,
+      "timeout": 10,
+      "on_failure": "warn"
+    }
+  ]
+}

@@ -1,0 +1,124 @@
+[
+  {
+    "id": "fe-001",
+    "category": "setup",
+    "priority": 1,
+    "description": "Initialize React TypeScript project with Vite",
+    "acceptance_criteria": [
+      "package.json with react, react-dom, typescript, vite",
+      "tsconfig.json with strict mode",
+      "src/App.tsx renders 'Todo App' heading",
+      "npm run dev starts on port 3000",
+      "Basic styling with CSS modules or inline styles"
+    ],
+    "dependencies": [],
+    "passes": false,
+    "model_hint": "implementation",
+    "notes": ""
+  },
+  {
+    "id": "fe-002",
+    "category": "feature",
+    "priority": 2,
+    "description": "Create API client for backend communication",
+    "acceptance_criteria": [
+      "src/api/todoApi.ts exports functions for all CRUD operations",
+      "Uses fetch with proper error handling",
+      "Base URL configurable via environment variable",
+      "Exports: getTodos(), getTodo(id), createTodo(data), updateTodo(id, data), deleteTodo(id)",
+      "All functions return typed responses"
+    ],
+    "dependencies": ["fe-001"],
+    "wait_for": ["be-003"],
+    "passes": false,
+    "model_hint": "implementation",
+    "notes": "Wait for backend API to be ready before implementing"
+  },
+  {
+    "id": "fe-003",
+    "category": "types",
+    "priority": 3,
+    "description": "Import shared types from backend",
+    "acceptance_criteria": [
+      "src/types/todo.ts imports or re-exports types from shared/types.ts",
+      "Or copies types if import not possible",
+      "Todo, CreateTodoDto, UpdateTodoDto available for use",
+      "Types match backend exactly"
+    ],
+    "dependencies": ["fe-002"],
+    "wait_for": ["be-004"],
+    "artifacts_from": ["be-004"],
+    "passes": false,
+    "model_hint": "implementation",
+    "notes": "CRITICAL: Must use exact types from backend shared/types.ts"
+  },
+  {
+    "id": "fe-004",
+    "category": "feature",
+    "priority": 4,
+    "description": "Create TodoList component",
+    "acceptance_criteria": [
+      "src/components/TodoList.tsx fetches and displays todos",
+      "Shows loading state while fetching",
+      "Shows error state if fetch fails",
+      "Each todo displays title and completed status",
+      "Completed todos have visual distinction (strikethrough or checkmark)"
+    ],
+    "dependencies": ["fe-003"],
+    "passes": false,
+    "model_hint": "implementation",
+    "notes": ""
+  },
+  {
+    "id": "fe-005",
+    "category": "feature",
+    "priority": 5,
+    "description": "Create TodoForm component for adding todos",
+    "acceptance_criteria": [
+      "src/components/TodoForm.tsx with input and submit button",
+      "Controlled input for todo title",
+      "Submits via API client createTodo()",
+      "Clears input after successful creation",
+      "Shows error if creation fails",
+      "Triggers list refresh after creation"
+    ],
+    "dependencies": ["fe-004"],
+    "passes": false,
+    "model_hint": "implementation",
+    "notes": ""
+  },
+  {
+    "id": "fe-006",
+    "category": "feature",
+    "priority": 6,
+    "description": "Add toggle complete and delete functionality",
+    "acceptance_criteria": [
+      "TodoList items have toggle button/checkbox",
+      "Clicking toggle calls updateTodo() with toggled completed state",
+      "TodoList items have delete button",
+      "Clicking delete calls deleteTodo() and removes from list",
+      "Optimistic UI updates with rollback on error"
+    ],
+    "dependencies": ["fe-005"],
+    "passes": false,
+    "model_hint": "implementation",
+    "notes": ""
+  },
+  {
+    "id": "fe-007",
+    "category": "test",
+    "priority": 7,
+    "description": "Add component tests",
+    "acceptance_criteria": [
+      "tests/TodoList.test.tsx tests rendering and interactions",
+      "tests/TodoForm.test.tsx tests form submission",
+      "Uses React Testing Library",
+      "Mocks API calls",
+      "npm test runs and passes"
+    ],
+    "dependencies": ["fe-006"],
+    "passes": false,
+    "model_hint": "verification",
+    "notes": ""
+  }
+]

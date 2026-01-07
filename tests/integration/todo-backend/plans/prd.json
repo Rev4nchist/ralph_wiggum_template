@@ -1,0 +1,91 @@
+[
+  {
+    "id": "be-001",
+    "category": "setup",
+    "priority": 1,
+    "description": "Initialize Express TypeScript project with basic configuration",
+    "acceptance_criteria": [
+      "package.json with express, typescript, ts-node, @types/express",
+      "tsconfig.json with strict mode enabled",
+      "src/index.ts creates Express server on port 3001",
+      "npm run dev starts the server",
+      "GET / returns { status: 'ok' }"
+    ],
+    "dependencies": [],
+    "passes": false,
+    "model_hint": "implementation",
+    "notes": ""
+  },
+  {
+    "id": "be-002",
+    "category": "feature",
+    "priority": 2,
+    "description": "Create in-memory Todo storage with CRUD operations",
+    "acceptance_criteria": [
+      "src/store.ts exports TodoStore class",
+      "Store has getAll(), getById(), create(), update(), delete() methods",
+      "Uses Map<string, Todo> for storage",
+      "Auto-generates UUID for new todos",
+      "Timestamps createdAt and updatedAt"
+    ],
+    "dependencies": ["be-001"],
+    "passes": false,
+    "model_hint": "implementation",
+    "notes": ""
+  },
+  {
+    "id": "be-003",
+    "category": "feature",
+    "priority": 3,
+    "description": "Create Todo CRUD API endpoints",
+    "acceptance_criteria": [
+      "GET /todos returns array of all todos",
+      "GET /todos/:id returns single todo or 404",
+      "POST /todos creates new todo, returns 201 with todo",
+      "PUT /todos/:id updates todo, returns updated todo or 404",
+      "DELETE /todos/:id removes todo, returns 204 or 404",
+      "All responses use application/json",
+      "CORS enabled for localhost:3000"
+    ],
+    "dependencies": ["be-002"],
+    "passes": false,
+    "model_hint": "implementation",
+    "notes": ""
+  },
+  {
+    "id": "be-004",
+    "category": "types",
+    "priority": 4,
+    "description": "Create shared Todo type definition for frontend consumption",
+    "acceptance_criteria": [
+      "shared/types.ts exports Todo interface",
+      "Todo has: id (string), title (string), completed (boolean), createdAt (string), updatedAt (string)",
+      "shared/types.ts exports CreateTodoDto with just title",
+      "shared/types.ts exports UpdateTodoDto with optional title and completed",
+      "File is accessible from ../shared/types.ts for frontend"
+    ],
+    "dependencies": ["be-003"],
+    "passes": false,
+    "model_hint": "implementation",
+    "handoff_to": ["agent-frontend"],
+    "artifacts": ["shared/types.ts"],
+    "notes": "IMPORTANT: This file will be consumed by frontend agent. Lock file before editing."
+  },
+  {
+    "id": "be-005",
+    "category": "test",
+    "priority": 5,
+    "description": "Add basic API tests",
+    "acceptance_criteria": [
+      "tests/api.test.ts exists",
+      "Tests all CRUD operations",
+      "Tests error cases (404s)",
+      "npm test runs and passes",
+      "At least 80% code coverage on routes"
+    ],
+    "dependencies": ["be-004"],
+    "passes": false,
+    "model_hint": "verification",
+    "notes": ""
+  }
+]

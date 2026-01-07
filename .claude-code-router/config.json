@@ -7,7 +7,7 @@
     {
       "name": "openrouter",
       "api_base_url": "https://openrouter.ai/api/v1/chat/completions",
-      "api_key": "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",
+      "api_key": "${OPENROUTER_API_KEY}",
       "models": [
         "anthropic/claude-opus-4.5",
         "anthropic/claude-sonnet-4",
@@ -26,5 +26,81 @@
     "think": "openrouter,anthropic/claude-opus-4.5",
     "longContext": "openrouter,minimax/minimax-m2.1",
     "longContextThreshold": 60000
+  },
+
+  "TaskRouting": {
+    "_comment": "Pattern-based model selection for Ralph agents",
+
+    "planning": {
+      "model": "openrouter,anthropic/claude-opus-4.5",
+      "patterns": [
+        "architect", "design", "plan", "strategy",
+        "break down", "analyze requirements", "trade-off",
+        "how should", "what approach", "consider options"
+      ],
+      "taskTypes": ["planning", "architecture", "review"]
+    },
+
+    "implementation": {
+      "model": "openrouter,z-ai/glm-4.7",
+      "patterns": [
+        "implement", "create", "build", "write code",
+        "add feature", "fix bug", "refactor", "modify",
+        "update", "change", "edit", "develop"
+      ],
+      "taskTypes": ["implement", "debug", "refactor"]
+    },
+
+    "verification": {
+      "model": "openrouter,minimax/minimax-m2.1",
+      "patterns": [
+        "test", "lint", "format", "check types",
+        "run build", "verify", "validate", "npm test",
+        "npm run", "prettier", "eslint"
+      ],
+      "taskTypes": ["test", "lint", "format"]
+    },
+
+    "documentation": {
+      "model": "openrouter,minimax/minimax-m2.1",
+      "patterns": [
+        "document", "write docs", "readme", "jsdoc",
+        "comment", "explain code", "api docs"
+      ],
+      "taskTypes": ["docs", "documentation"]
+    },
+
+    "review": {
+      "model": "openrouter,anthropic/claude-opus-4.5",
+      "patterns": [
+        "review", "audit", "assess", "evaluate",
+        "security scan", "code quality", "best practices"
+      ],
+      "taskTypes": ["review", "security", "audit"]
+    }
+  },
+
+  "ModelProfiles": {
+    "opus": {
+      "provider": "openrouter",
+      "model": "anthropic/claude-opus-4.5",
+      "description": "Planning, architecture, complex reasoning, code review",
+      "costTier": "high",
+      "strengths": ["reasoning", "planning", "analysis", "review"]
+    },
+    "glm": {
+      "provider": "openrouter",
+      "model": "z-ai/glm-4.7",
+      "description": "Workhorse implementation, feature development, debugging",
+      "costTier": "medium",
+      "strengths": ["coding", "implementation", "debugging", "refactoring"]
+    },
+    "minimax": {
+      "provider": "openrouter",
+      "model": "minimax/minimax-m2.1",
+      "description": "Fast background tasks, testing, documentation",
+      "costTier": "low",
+      "strengths": ["speed", "testing", "docs", "formatting"]
+    }
   }
 }
