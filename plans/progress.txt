@@ -139,3 +139,35 @@
 
 ---
 
+
+---
+## Model Verification Test - 2026-01-07 00:06:02
+Testing model routing: z-ai/glm-4.7 (main) + minimax/minimax-m2.1 (fast)
+Using: ccr code (Claude Code Router)
+
+---
+
+### 2026-01-07 - Iteration 6 (Verification)
+**Task:** task-005 - Add test suite for string utilities (Re-verification)
+**Status:** COMPLETE ✓
+
+**Actions Taken:**
+- Verified tests/strings.test.ts exists with 20 test cases
+- Confirmed test coverage:
+  - reverse: 5 tests (simple string, string with spaces, empty string, single character, special characters)
+  - capitalize: 7 tests (single word, multiple words, already capitalized, mixed case, empty string, multiple spaces, single character)
+  - wordCount: 8 tests (simple sentence, single word, empty string, whitespace-only, multiple spaces, leading/trailing spaces, many words, tabs/newlines)
+- Ran `npm test` successfully - all 38 tests pass (20 strings + 18 calculator = 38/38 green)
+- Updated PRD to set task-005 "passes": true
+
+**Acceptance Criteria Met:**
+- ✓ tests/strings.test.ts exists
+- ✓ All string functions have test coverage (reverse: 5 tests, capitalize: 7 tests, wordCount: 8 tests)
+- ✓ Empty string edge cases handled (empty string, whitespace-only tested across all methods)
+- ✓ npm test passes with all tests green (38/38 passed)
+
+**Next Steps:**
+- ALL PRD tasks (task-001 through task-005) are now complete
+
+---
+
