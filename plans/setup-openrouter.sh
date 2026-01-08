@@ -22,15 +22,25 @@ if [ -f "/workspaces/ralph-wiggum-test/.claude-code-router/config.json" ]; then
     echo "✓ Config copied to ~/.claude-code-router/"
 fi
 
-# Set environment variables
-export OPENROUTER_API_KEY="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"
-export TELEGRAM_BOT_TOKEN="8352598115:AAFSsdNAx1tmbYMeWHYMExb1x60rAAZVPfk"
-export TELEGRAM_CHAT_ID="6891749518"
+# Set environment variables (get these from your .env file or secrets manager)
+# NEVER commit real secrets - these must be set from external source
+if [ -z "$OPENROUTER_API_KEY" ]; then
+    echo "ERROR: OPENROUTER_API_KEY not set. Export it before running this script."
+    exit 1
+fi
+if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
+    echo "ERROR: TELEGRAM_BOT_TOKEN not set. Export it before running this script."
+    exit 1
+fi
+if [ -z "$TELEGRAM_CHAT_ID" ]; then
+    echo "ERROR: TELEGRAM_CHAT_ID not set. Export it before running this script."
+    exit 1
+fi
 
-# Add to shell profile for persistence
-echo 'export OPENROUTER_API_KEY="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"' >> ~/.bashrc
-echo 'export TELEGRAM_BOT_TOKEN="8352598115:AAFSsdNAx1tmbYMeWHYMExb1x60rAAZVPfk"' >> ~/.bashrc
-echo 'export TELEGRAM_CHAT_ID="6891749518"' >> ~/.bashrc
+# Add to shell profile for persistence (references env vars, not hardcoded)
+echo "export OPENROUTER_API_KEY=\"\$OPENROUTER_API_KEY\"" >> ~/.bashrc
+echo "export TELEGRAM_BOT_TOKEN=\"\$TELEGRAM_BOT_TOKEN\"" >> ~/.bashrc
+echo "export TELEGRAM_CHAT_ID=\"\$TELEGRAM_CHAT_ID\"" >> ~/.bashrc
 
 echo ""
 echo "=== Configuration ==="
