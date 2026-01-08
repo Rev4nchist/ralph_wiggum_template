@@ -11,6 +11,11 @@
  * - ralph_unlock_file: Release file lock
  * - ralph_get_artifacts: Retrieve task artifacts
  * - ralph_send_message: Send message to agent
+ *
+ * Librarian documentation search tools:
+ * - librarian_search: Search indexed documentation
+ * - librarian_list_sources: List available documentation sources
+ * - librarian_get_document: Retrieve specific document by ID
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -22,10 +27,210 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import Redis from "ioredis";
 import { z } from "zod";
+import { spawn } from "child_process";
+import * as path from "path";
 
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
+const LIBRARIAN_PATH = process.env.LIBRARIAN_PATH || "librarian";
+const LIBRARIAN_TIMEOUT = parseInt(process.env.LIBRARIAN_TIMEOUT || "60000", 10);
 
 let redis: Redis;
+
+// =============================================================================
+// Librarian CLI Integration
+// =============================================================================
+
+interface LibrarianSearchResult {
+  title: string;
+  content: string;
+  source: string;
+  library: string;
+  url?: string;
+  score: number;
+  metadata?: Record<string, any>;
+}
+
+interface LibrarianSource {
+  name: string;
+  source_url: string;
+  docs_path: string;
+  ref: string;
+  last_indexed?: string;
+  doc_count: number;
+  status: string;
+}
+
+async function runLibrarianCommand(
+  args: string[],
+  timeout: number = LIBRARIAN_TIMEOUT
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(LIBRARIAN_PATH, args, {
+      timeout,
+      shell: process.platform === "win32",
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    proc.stdout.on("data", (data) => {
+      stdout += data.toString();
+    });
+
+    proc.stderr.on("data", (data) => {
+      stderr += data.toString();
+    });
+
+    proc.on("close", (code) => {
+      resolve({ stdout, stderr, exitCode: code || 0 });
+    });
+
+    proc.on("error", (err) => {
+      reject(err);
+    });
+
+    setTimeout(() => {
+      proc.kill();
+      reject(new Error(`Librarian command timed out after ${timeout}ms`));
+    }, timeout);
+  });
+}
+
+async function librarianSearch(
+  query: string,
+  options: {
+    library?: string;
+    mode?: "word" | "vector" | "hybrid";
+    limit?: number;
+  } = {}
+): Promise<LibrarianSearchResult[]> {
+  if (!options.library) {
+    throw new Error("Library name is required for search. Use librarian_list_sources to see available libraries.");
+  }
+
+  const args = ["search", "--library", options.library, query];
+  args.push("--mode", options.mode || "hybrid");
+
+  const result = await runLibrarianCommand(args);
+
+  if (result.exitCode !== 0) {
+    const errMsg = result.stderr || result.stdout;
+    throw new Error(`Librarian search failed: ${errMsg}`);
+  }
+
+  return parseTextResults(result.stdout, options.library);
+}
+
+function parseTextResults(output: string, library?: string): LibrarianSearchResult[] {
+  const results: LibrarianSearchResult[] = [];
+  const lines = output.split("\n");
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("-") === false) continue;
+    if (trimmed.includes("use `librarian get")) continue;
+
+    const match = trimmed.match(/^-\s+([^:]+):\s+([^\s]+)\s+\(([^)]+)\)\s+doc\s+(\d+)\s+slice\s+([^\s]+)\s+score\s+([\d.]+)/);
+    if (match) {
+      results.push({
+        title: match[2],
+        content: "",
+        source: match[3],
+        library: match[1] || library || "unknown",
+        score: parseFloat(match[6]) || 0,
+        metadata: {
+          doc_id: match[4],
+          slice: match[5],
+        },
+      });
+    } else {
+      const simpleMatch = trimmed.match(/^-\s+(.+)$/);
+      if (simpleMatch) {
+        results.push({
+          title: simpleMatch[1],
+          content: "",
+          source: "",
+          library: library || "unknown",
+          score: 0,
+        });
+      }
+    }
+  }
+
+  return results;
+}
+
+async function librarianListSources(): Promise<LibrarianSource[]> {
+  const statusResult = await runLibrarianCommand(["status"]);
+  const sources: LibrarianSource[] = [];
+
+  const sourceCountMatch = statusResult.stdout.match(/Sources:\s*(\d+)/);
+  const totalSources = sourceCountMatch ? parseInt(sourceCountMatch[1], 10) : 0;
+
+  const commonLibs = [
+    "react", "next", "vue", "angular", "svelte", "typescript",
+    "node", "express", "fastify", "prisma", "drizzle", "tailwind",
+    "zod", "trpc", "remix", "astro", "vite", "esbuild"
+  ];
+
+  for (const lib of commonLibs) {
+    try {
+      const result = await runLibrarianCommand(["library", lib], 10000);
+      if (result.exitCode === 0 && result.stdout.trim()) {
+        const lines = result.stdout.split("\n");
+        for (const line of lines) {
+          const match = line.match(/^-\s+([^\s]+)\s+\(ref:\s*([^,]+),\s*versions?:\s*([^)]+)\)/);
+          if (match) {
+            sources.push({
+              name: match[1],
+              source_url: `https://github.com/${match[1]}`,
+              docs_path: "",
+              ref: match[2].trim(),
+              doc_count: 0,
+              status: "indexed",
+            });
+          }
+        }
+      }
+    } catch (e) {
+    }
+  }
+
+  const uniqueSources = Array.from(new Map(sources.map(s => [s.name, s])).values());
+
+  return uniqueSources.length > 0 ? uniqueSources : [{
+    name: "Use 'librarian library <name>' to find specific libraries",
+    source_url: "",
+    docs_path: "",
+    ref: "",
+    doc_count: totalSources,
+    status: "hint",
+  }];
+}
+
+async function librarianGetDocument(
+  library: string,
+  docId: string,
+  slice?: string
+): Promise<Record<string, any> | null> {
+  const args = ["get", "--library", library, "--doc", docId];
+  if (slice) {
+    args.push("--slice", slice);
+  }
+
+  const result = await runLibrarianCommand(args);
+
+  if (result.exitCode !== 0) {
+    return null;
+  }
+
+  return {
+    library,
+    doc_id: docId,
+    slice: slice || "full",
+    content: result.stdout,
+  };
+}
 
 // =============================================================================
 // Cycle Detection for Task Dependencies
@@ -213,6 +418,36 @@ const TOOLS: Record<string, z.ZodSchema> = {
     task_id: z.string().describe("Task ID to validate"),
     dependencies: z.array(z.string()).describe("Proposed dependencies"),
   }),
+
+  // Librarian documentation search tools
+  librarian_search: z.object({
+    query: z.string().describe("Search query (natural language)"),
+    library: z.string().optional().describe("Filter to specific library/source"),
+    mode: z.enum(["word", "vector", "hybrid"]).default("hybrid").describe("Search mode"),
+    limit: z.number().min(1).max(50).default(10).describe("Maximum results"),
+  }),
+
+  librarian_list_sources: z.object({}),
+
+  librarian_get_document: z.object({
+    library: z.string().describe("Library name (e.g., reactjs/react.dev)"),
+    doc_id: z.string().describe("Document ID from search results"),
+    slice: z.string().optional().describe("Slice range (e.g., '13:29') from search results"),
+  }),
+
+  librarian_search_api: z.object({
+    api_name: z.string().describe("API/function/class name to search"),
+    library: z.string().describe("Library to search in"),
+  }),
+
+  librarian_search_error: z.object({
+    error_message: z.string().describe("Error message to search solutions for"),
+    library: z.string().optional().describe("Library context"),
+  }),
+
+  librarian_find_library: z.object({
+    name: z.string().describe("Library name to search for (e.g., react, next, prisma)"),
+  }),
 };
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -355,6 +590,83 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             dependencies: { type: "array", items: { type: "string" }, description: "Proposed dependency task IDs" },
           },
           required: ["task_id", "dependencies"],
+        },
+      },
+      // Librarian documentation search tools
+      {
+        name: "librarian_search",
+        description: "Search indexed documentation using keyword, semantic, or hybrid search. Returns relevant documentation chunks with scores.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Search query (natural language)" },
+            library: { type: "string", description: "Filter to specific library/source (optional)" },
+            mode: {
+              type: "string",
+              enum: ["word", "vector", "hybrid"],
+              default: "hybrid",
+              description: "Search mode: word (keyword), vector (semantic), hybrid (combined)"
+            },
+            limit: { type: "number", minimum: 1, maximum: 50, default: 10, description: "Maximum results" },
+          },
+          required: ["query"],
+        },
+      },
+      {
+        name: "librarian_list_sources",
+        description: "List all available documentation sources indexed in Librarian",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          required: [],
+        },
+      },
+      {
+        name: "librarian_get_document",
+        description: "Retrieve a specific document chunk by its ID and slice from a library. Use the doc_id and slice from search results.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            library: { type: "string", description: "Library name (e.g., reactjs/react.dev)" },
+            doc_id: { type: "string", description: "Document ID from search results" },
+            slice: { type: "string", description: "Slice range from search results (e.g., '13:29')" },
+          },
+          required: ["library", "doc_id"],
+        },
+      },
+      {
+        name: "librarian_search_api",
+        description: "Search for API documentation (functions, classes, methods) in a specific library",
+        inputSchema: {
+          type: "object",
+          properties: {
+            api_name: { type: "string", description: "API/function/class name to search" },
+            library: { type: "string", description: "Library to search in" },
+          },
+          required: ["api_name", "library"],
+        },
+      },
+      {
+        name: "librarian_search_error",
+        description: "Search for error message solutions and troubleshooting information",
+        inputSchema: {
+          type: "object",
+          properties: {
+            error_message: { type: "string", description: "Error message to search solutions for" },
+            library: { type: "string", description: "Library context (optional)" },
+          },
+          required: ["error_message"],
+        },
+      },
+      {
+        name: "librarian_find_library",
+        description: "Find the full library name/ID for searching. Use this to discover the correct library identifier before calling librarian_search.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Library name to search for (e.g., react, next, prisma)" },
+          },
+          required: ["name"],
         },
       },
     ],
@@ -654,6 +966,284 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             },
           ],
         };
+      }
+
+      // =======================================================================
+      // Librarian Documentation Search Tools
+      // =======================================================================
+
+      case "librarian_search": {
+        const { query, library, mode, limit } = args as any;
+
+        try {
+          const results = await librarianSearch(query, {
+            library,
+            mode: mode || "hybrid",
+            limit: limit || 10,
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: true,
+                  query,
+                  mode: mode || "hybrid",
+                  library: library || "all",
+                  result_count: results.length,
+                  results: results.map((r) => ({
+                    title: r.title,
+                    library: r.library,
+                    source: r.source,
+                    score: r.score,
+                    content: r.content.substring(0, 500) + (r.content.length > 500 ? "..." : ""),
+                    url: r.url,
+                  })),
+                }, null, 2),
+              },
+            ],
+          };
+        } catch (err: any) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ success: false, error: err.message }),
+              },
+            ],
+            isError: true,
+          };
+        }
+      }
+
+      case "librarian_list_sources": {
+        try {
+          const sources = await librarianListSources();
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: true,
+                  source_count: sources.length,
+                  sources: sources.map((s) => ({
+                    name: s.name,
+                    doc_count: s.doc_count,
+                    status: s.status,
+                    source_url: s.source_url,
+                    last_indexed: s.last_indexed,
+                  })),
+                }, null, 2),
+              },
+            ],
+          };
+        } catch (err: any) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ success: false, error: err.message }),
+              },
+            ],
+            isError: true,
+          };
+        }
+      }
+
+      case "librarian_get_document": {
+        const { library, doc_id, slice } = args as any;
+
+        try {
+          const doc = await librarianGetDocument(library, doc_id, slice);
+
+          if (!doc) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({ success: false, error: "Document not found" }),
+                },
+              ],
+            };
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: true,
+                  library,
+                  doc_id,
+                  slice: slice || "full",
+                  document: doc,
+                }, null, 2),
+              },
+            ],
+          };
+        } catch (err: any) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ success: false, error: err.message }),
+              },
+            ],
+            isError: true,
+          };
+        }
+      }
+
+      case "librarian_search_api": {
+        const { api_name, library } = args as any;
+
+        try {
+          const query = `${api_name} API reference usage example`;
+          const results = await librarianSearch(query, {
+            library,
+            mode: "hybrid",
+            limit: 5,
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: true,
+                  api_name,
+                  library,
+                  result_count: results.length,
+                  results: results.map((r) => ({
+                    title: r.title,
+                    source: r.source,
+                    score: r.score,
+                    content: r.content,
+                    url: r.url,
+                  })),
+                }, null, 2),
+              },
+            ],
+          };
+        } catch (err: any) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ success: false, error: err.message }),
+              },
+            ],
+            isError: true,
+          };
+        }
+      }
+
+      case "librarian_search_error": {
+        const { error_message, library } = args as any;
+
+        try {
+          const query = `error ${error_message} solution fix troubleshooting`;
+          const results = await librarianSearch(query, {
+            library,
+            mode: "hybrid",
+            limit: 10,
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: true,
+                  error_message,
+                  library: library || "all",
+                  result_count: results.length,
+                  results: results.map((r) => ({
+                    title: r.title,
+                    library: r.library,
+                    source: r.source,
+                    score: r.score,
+                    content: r.content,
+                    url: r.url,
+                  })),
+                }, null, 2),
+              },
+            ],
+          };
+        } catch (err: any) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ success: false, error: err.message }),
+              },
+            ],
+            isError: true,
+          };
+        }
+      }
+
+      case "librarian_find_library": {
+        const { name: libName } = args as any;
+
+        try {
+          const result = await runLibrarianCommand(["library", libName], 15000);
+
+          if (result.exitCode !== 0 || !result.stdout.trim()) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    success: false,
+                    query: libName,
+                    message: "No matching libraries found. Try a different name or add the library with 'librarian add <url>'",
+                  }),
+                },
+              ],
+            };
+          }
+
+          const libraries: Array<{ name: string; ref: string; versions: string }> = [];
+          const lines = result.stdout.split("\n");
+
+          for (const line of lines) {
+            const match = line.match(/^-\s+([^\s]+)\s+\(ref:\s*([^,]+),\s*versions?:\s*([^)]+)\)/);
+            if (match) {
+              libraries.push({
+                name: match[1],
+                ref: match[2].trim(),
+                versions: match[3].trim(),
+              });
+            }
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: true,
+                  query: libName,
+                  libraries,
+                  usage_hint: "Use the 'name' value as the 'library' parameter in librarian_search",
+                }, null, 2),
+              },
+            ],
+          };
+        } catch (err: any) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ success: false, error: err.message }),
+              },
+            ],
+            isError: true,
+          };
+        }
       }
 
       default:

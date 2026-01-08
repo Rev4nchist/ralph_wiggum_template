@@ -22,18 +22,24 @@ from .protocol import (
 class LibrarianClient:
     """Client for interacting with Librarian documentation search.
 
+    CLI Commands Wrapped:
+        - librarian search "query" --library "lib" --mode word|vector|hybrid --json
+        - librarian add github.com/owner/repo --docs-path "path" --branch "branch"
+        - librarian list (shows all sources)
+        - librarian embed --source ID --force (embeds a source)
+
     Usage:
         client = LibrarianClient()
 
         # Search documentation
-        results = client.search("react hooks state management", library="react")
+        results = client.search("react hooks", library="react", mode="hybrid")
 
         # List indexed libraries
         libraries = client.list_libraries()
 
-        # Add and ingest a new library
-        client.add_library("https://github.com/vercel/next.js", docs_path="docs")
-        client.ingest("nextjs")
+        # Add and embed a new library
+        client.add_library("github.com/vercel/next.js", docs_path="docs")
+        client.embed("nextjs", force=True)
     """
 
     def __init__(
@@ -107,7 +113,7 @@ class LibrarianClient:
         query: str,
         library: Optional[str] = None,
         limit: int = 10,
-        semantic: bool = True
+        mode: str = "hybrid"
     ) -> List[SearchResult]:
         """Search documentation.
 
@@ -115,19 +121,17 @@ class LibrarianClient:
             query: Search query (natural language)
             library: Filter to specific library
             limit: Maximum results to return
-            semantic: Use semantic (vector) search in addition to keyword
+            mode: Search mode - "word", "vector", or "hybrid" (default)
 
         Returns:
             List of SearchResult objects
         """
-        args = ["search", query, "--limit", str(limit)]
+        args = ["search", query]
 
         if library:
             args.extend(["--library", library])
 
-        if not semantic:
-            args.append("--keyword-only")
-
+        args.extend(["--mode", mode])
         args.append("--json")
 
         result = self._run_command(args)
@@ -201,8 +205,8 @@ class LibrarianClient:
         return results
 
     def list_libraries(self) -> List[LibraryInfo]:
-        """List all indexed libraries."""
-        result = self._run_command(["library", "--json"])
+        """List all indexed libraries (sources)."""
+        result = self._run_command(["list"])
 
         if result.returncode != 0:
             raise LibrarianError(f"Failed to list libraries: {result.stderr}")
@@ -230,21 +234,26 @@ class LibrarianClient:
         self,
         source_url: str,
         name: Optional[str] = None,
-        docs_path: str = "docs",
-        ref: str = "main"
+        docs_path: Optional[str] = None,
+        branch: str = "main"
     ) -> bool:
         """Add a library source for indexing.
 
         Args:
-            source_url: GitHub repo URL or website URL
+            source_url: GitHub repo URL (e.g., github.com/owner/repo)
             name: Library name (auto-detected if not provided)
-            docs_path: Path to docs within repo
-            ref: Git ref (branch/tag)
+            docs_path: Path to docs within repo (optional)
+            branch: Git branch (default: main)
 
         Returns:
             True if successful
         """
-        args = ["add", source_url, "--docs", docs_path, "--ref", ref]
+        args = ["add", source_url]
+
+        if docs_path:
+            args.extend(["--docs-path", docs_path])
+
+        args.extend(["--branch", branch])
 
         if name:
             args.extend(["--name", name])
@@ -256,26 +265,31 @@ class LibrarianClient:
 
         return True
 
-    def ingest(self, library: str) -> IngestResult:
-        """Ingest documentation for a library.
+    def embed(self, source_id: str, force: bool = False) -> IngestResult:
+        """Embed (index) documentation for a source.
 
-        This fetches, parses, and indexes the documentation.
+        This generates embeddings for the documentation.
 
         Args:
-            library: Library name to ingest
+            source_id: Source ID to embed
+            force: Force re-embedding even if already done
 
         Returns:
             IngestResult with status
         """
         start_time = datetime.now()
 
-        result = self._run_command(["ingest", library], timeout=300)
+        args = ["embed", "--source", source_id]
+        if force:
+            args.append("--force")
+
+        result = self._run_command(args, timeout=300)
 
         duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
 
         if result.returncode != 0:
             return IngestResult(
-                library=library,
+                library=source_id,
                 success=False,
                 error=result.stderr,
                 duration_ms=duration_ms
@@ -293,11 +307,15 @@ class LibrarianClient:
                     docs_indexed = int(match.group(1))
 
         return IngestResult(
-            library=library,
+            library=source_id,
             success=True,
             docs_indexed=docs_indexed,
             duration_ms=duration_ms
         )
+
+    def ingest(self, library: str) -> IngestResult:
+        """Alias for embed() for backwards compatibility."""
+        return self.embed(library, force=False)
 
     def get_document(self, library: str, doc_id: str) -> Optional[Dict[str, Any]]:
         """Get a specific document by ID.
@@ -328,7 +346,7 @@ class LibrarianClient:
             f"{api_name} API reference usage example",
             library=library,
             limit=5,
-            semantic=True
+            mode="hybrid"
         )
 
     def search_for_error(self, error_message: str, library: Optional[str] = None) -> List[SearchResult]:
@@ -375,7 +393,7 @@ class MockLibrarianClient(LibrarianClient):
         query: str,
         library: Optional[str] = None,
         limit: int = 10,
-        semantic: bool = True
+        mode: str = "hybrid"
     ) -> List[SearchResult]:
         results = []
 
@@ -406,24 +424,28 @@ class MockLibrarianClient(LibrarianClient):
         return list(self._libraries.values())
 
     def add_library(self, source_url: str, name: Optional[str] = None,
-                   docs_path: str = "docs", ref: str = "main") -> bool:
+                   docs_path: Optional[str] = None, branch: str = "main") -> bool:
         lib_name = name or source_url.split("/")[-1].replace(".git", "")
         self._libraries[lib_name] = LibraryInfo(
             name=lib_name,
             source_url=source_url,
-            docs_path=docs_path,
-            ref=ref,
+            docs_path=docs_path or "docs",
+            ref=branch,
             status="added"
         )
         return True
 
-    def ingest(self, library: str) -> IngestResult:
-        if library not in self._libraries:
-            return IngestResult(library=library, success=False, error="Library not found")
+    def embed(self, source_id: str, force: bool = False) -> IngestResult:
+        if source_id not in self._libraries:
+            return IngestResult(library=source_id, success=False, error="Source not found")
 
-        self._libraries[library].status = "indexed"
+        self._libraries[source_id].status = "indexed"
         return IngestResult(
-            library=library,
+            library=source_id,
             success=True,
-            docs_indexed=self._libraries[library].doc_count
+            docs_indexed=self._libraries[source_id].doc_count
         )
+
+    def ingest(self, library: str) -> IngestResult:
+        """Alias for embed() for backwards compatibility."""
+        return self.embed(library, force=False)

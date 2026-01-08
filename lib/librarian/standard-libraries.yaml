@@ -1,0 +1,75 @@
+# Standard Libraries for Librarian
+# Run setup script to add all libraries: python -m lib.librarian.setup_standard
+
+libraries:
+  - name: react
+    repo: reactjs/react.dev
+    docs_path: src/content
+    branch: main
+    description: React documentation from react.dev
+
+  - name: tailwindcss
+    repo: tailwindlabs/tailwindcss.com
+    docs_path: src/docs
+    branch: main
+    description: Tailwind CSS documentation
+
+  - name: nextjs
+    repo: vercel/next.js
+    docs_path: docs
+    branch: canary
+    description: Next.js framework documentation
+
+  - name: typescript
+    repo: microsoft/TypeScript-Website
+    docs_path: packages/documentation/copy
+    branch: v2
+    description: TypeScript language documentation
+
+  - name: prisma
+    repo: prisma/docs
+    docs_path: content
+    branch: main
+    description: Prisma ORM documentation
+
+  - name: zod
+    repo: colinhacks/zod
+    docs_path: README.md
+    branch: main
+    description: Zod schema validation (README only)
+
+  - name: tanstack-query
+    repo: TanStack/query
+    docs_path: docs
+    branch: main
+    description: TanStack Query (React Query) documentation
+
+  - name: vitest
+    repo: vitest-dev/vitest
+    docs_path: docs
+    branch: main
+    description: Vitest testing framework documentation
+
+  - name: zustand
+    repo: pmndrs/zustand
+    docs_path: docs
+    branch: main
+    description: Zustand state management documentation
+
+  - name: authjs
+    repo: nextauthjs/next-auth
+    docs_path: docs
+    branch: main
+    description: Auth.js (NextAuth) authentication documentation
+
+  - name: playwright
+    repo: microsoft/playwright
+    docs_path: docs
+    branch: main
+    description: Playwright testing documentation
+
+  - name: date-fns
+    repo: date-fns/date-fns
+    docs_path: docs
+    branch: main
+    description: date-fns date utility documentation

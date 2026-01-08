@@ -157,7 +157,7 @@ def test_library_management():
         source_url="https://github.com/prisma/prisma",
         name="prisma",
         docs_path="docs",
-        ref="main"
+        branch="main"
     )
 
     if success:
