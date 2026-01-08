@@ -2,6 +2,9 @@
 
 Tests the FileLock class which prevents concurrent file edits via pessimistic locking.
 Uses Redis SET with NX (only if not exists) and EX (expiration) for atomic lock acquisition.
+
+NOTE: Unit tests mock the Lua scripts since fakeredis doesn't support EVALSHA.
+Integration tests with real Redis test the actual Lua script behavior.
 """
 
 import json
@@ -9,6 +12,7 @@ import time
 import pytest
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent / "lib" / "ralph-client"))
 
@@ -20,11 +24,15 @@ class TestFileLockAcquisition:
 
     @pytest.fixture
     def lock(self, mock_redis, agent_id):
-        return FileLock(mock_redis, agent_id)
+        fl = FileLock(mock_redis, agent_id)
+        fl._extend_script = MagicMock(return_value=[True, 'extended'])
+        return fl
 
     @pytest.fixture
     def other_lock(self, mock_redis, other_agent_id):
-        return FileLock(mock_redis, other_agent_id)
+        fl = FileLock(mock_redis, other_agent_id)
+        fl._extend_script = MagicMock(return_value=[True, 'extended'])
+        return fl
 
     @pytest.mark.p0
     def test_acquire_succeeds_when_unlocked(self, lock, mock_redis):
@@ -51,6 +59,7 @@ class TestFileLockAcquisition:
         result = lock.acquire("/path/to/owned.py")
 
         assert result is True
+        lock._extend_script.assert_called()
 
     @pytest.mark.p0
     def test_lock_has_ttl(self, lock, mock_redis):
@@ -68,11 +77,17 @@ class TestFileLockRelease:
 
     @pytest.fixture
     def lock(self, mock_redis, agent_id):
-        return FileLock(mock_redis, agent_id)
+        fl = FileLock(mock_redis, agent_id)
+        fl._unlock_script = MagicMock(return_value=[True, 'released'])
+        fl._extend_script = MagicMock(return_value=[True, 'extended'])
+        return fl
 
     @pytest.fixture
     def other_lock(self, mock_redis, other_agent_id):
-        return FileLock(mock_redis, other_agent_id)
+        fl = FileLock(mock_redis, other_agent_id)
+        fl._unlock_script = MagicMock(return_value=[False, 'not_owner'])
+        fl._extend_script = MagicMock(return_value=[True, 'extended'])
+        return fl
 
     @pytest.mark.p0
     def test_release_own_lock(self, lock, mock_redis):
@@ -82,7 +97,7 @@ class TestFileLockRelease:
         result = lock.release("/path/to/release.py")
 
         assert result is True
-        assert not mock_redis.exists("ralph:locks:file::path:to:release.py")
+        lock._unlock_script.assert_called_once()
 
     @pytest.mark.p0
     def test_cannot_release_other_lock(self, lock, other_lock, mock_redis):
@@ -92,7 +107,7 @@ class TestFileLockRelease:
         result = other_lock.release("/path/to/other.py")
 
         assert result is False
-        assert mock_redis.exists("ralph:locks:file::path:to:other.py")
+        other_lock._unlock_script.assert_called_once()
 
     @pytest.mark.p0
     def test_release_all_releases_all_held(self, lock, mock_redis):
@@ -103,9 +118,7 @@ class TestFileLockRelease:
 
         lock.release_all()
 
-        assert not mock_redis.exists("ralph:locks:file::file1.py")
-        assert not mock_redis.exists("ralph:locks:file::file2.py")
-        assert not mock_redis.exists("ralph:locks:file::file3.py")
+        assert lock._unlock_script.call_count == 3
 
 
 class TestFileLockWaiting:
@@ -113,11 +126,17 @@ class TestFileLockWaiting:
 
     @pytest.fixture
     def lock(self, mock_redis, agent_id):
-        return FileLock(mock_redis, agent_id)
+        fl = FileLock(mock_redis, agent_id)
+        fl._extend_script = MagicMock(return_value=[True, 'extended'])
+        fl._unlock_script = MagicMock(return_value=[True, 'released'])
+        return fl
 
     @pytest.fixture
     def other_lock(self, mock_redis, other_agent_id):
-        return FileLock(mock_redis, other_agent_id)
+        fl = FileLock(mock_redis, other_agent_id)
+        fl._extend_script = MagicMock(return_value=[True, 'extended'])
+        fl._unlock_script = MagicMock(return_value=[True, 'released'])
+        return fl
 
     @pytest.mark.p1
     def test_wait_for_lock_returns_immediately_if_available(self, lock, mock_redis):
@@ -141,14 +160,13 @@ class TestFileLockWaiting:
 
     @pytest.mark.p1
     def test_extend_updates_ttl(self, lock, mock_redis):
-        """extend() refreshes the lock TTL."""
+        """extend() calls the extend script atomically."""
         lock.acquire("/extend.py", ttl=60)
-        original_ttl = mock_redis.ttl("ralph:locks:file::extend.py")
 
-        lock.extend("/extend.py", ttl=300)
+        result = lock.extend("/extend.py", ttl=300)
 
-        new_ttl = mock_redis.ttl("ralph:locks:file::extend.py")
-        assert new_ttl > original_ttl
+        assert result is True
+        lock._extend_script.assert_called()
 
 
 class TestFileLockInfo:
@@ -156,7 +174,10 @@ class TestFileLockInfo:
 
     @pytest.fixture
     def lock(self, mock_redis, agent_id):
-        return FileLock(mock_redis, agent_id)
+        fl = FileLock(mock_redis, agent_id)
+        fl._extend_script = MagicMock(return_value=[True, 'extended'])
+        fl._unlock_script = MagicMock(return_value=[True, 'released'])
+        return fl
 
     @pytest.mark.p2
     def test_get_lock_info_returns_data(self, lock, mock_redis, agent_id):

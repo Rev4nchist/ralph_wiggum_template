@@ -1,6 +1,7 @@
 """Task Queue - Distributed task management for agents"""
 
 import json
+import time
 import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
@@ -70,13 +71,15 @@ class TaskQueue:
     TASK_PREFIX = "ralph:tasks:data"
     CLAIMED_KEY = "ralph:tasks:claimed"
 
-    # Lua script for atomic claim with dependency checking
     CLAIM_SCRIPT = """
     local task_key = KEYS[1]
     local claim_key = KEYS[2]
+    local queue_key = KEYS[3]
     local agent_id = ARGV[1]
     local dep_keys = cjson.decode(ARGV[2])
     local wait_keys = cjson.decode(ARGV[3])
+    local task_id = ARGV[4]
+    local timestamp = ARGV[5]
 
     -- Check if already claimed
     if redis.call('EXISTS', claim_key) == 1 then
@@ -107,13 +110,24 @@ class TaskQueue:
         end
     end
 
-    -- Atomically claim the task
-    redis.call('SET', claim_key, agent_id, 'EX', 3600, 'NX')
-
-    -- Verify we got the claim (NX means only set if not exists)
-    if redis.call('GET', claim_key) ~= agent_id then
-        return {false, 'claim_race_lost'}
+    -- Atomically claim the task using SET NX and check return value directly
+    local result = redis.call('SET', claim_key, agent_id, 'EX', 3600, 'NX')
+    if not result then
+        return {false, 'already_claimed'}
     end
+
+    -- Update task status atomically
+    local task_data = redis.call('GET', task_key)
+    if task_data then
+        local task = cjson.decode(task_data)
+        task.status = 'claimed'
+        task.assigned_to = agent_id
+        task.started_at = timestamp
+        redis.call('SET', task_key, cjson.encode(task))
+    end
+
+    -- Remove from queue atomically
+    redis.call('ZREM', queue_key, task_id)
 
     return {true, 'claimed'}
     """
@@ -126,6 +140,19 @@ class TaskQueue:
     def _task_key(self, task_id: str) -> str:
         return f"{self.TASK_PREFIX}:{task_id}"
 
+    def _status_index_key(self, status: str) -> str:
+        return f"ralph:tasks:by_status:{status}"
+
+    def _update_status_index(self, task_id: str, old_status: Optional[str], new_status: str) -> None:
+        """Maintain sorted sets for task status lookups."""
+        if old_status:
+            self.redis.zrem(self._status_index_key(old_status), task_id)
+        self.redis.zadd(self._status_index_key(new_status), {task_id: time.time()})
+
+    def count_by_status(self, status: str) -> int:
+        """Count tasks with a given status using the index."""
+        return self.redis.zcard(self._status_index_key(status))
+
     def enqueue(self, task: Task) -> str:
         """Add task to the queue."""
         if not task.id:
@@ -135,6 +162,7 @@ class TaskQueue:
         task.status = TaskStatus.PENDING.value
 
         self.redis.set(self._task_key(task.id), json.dumps(task.to_dict()))
+        self._update_status_index(task.id, None, TaskStatus.PENDING.value)
 
         score = (10 - task.priority) * 1000000 + int(datetime.utcnow().timestamp())
         self.redis.zadd(self.QUEUE_KEY, {task.id: score})
@@ -163,28 +191,22 @@ class TaskQueue:
 
         dep_keys = json.dumps([self._task_key(d) for d in task.dependencies])
         wait_keys = json.dumps([self._task_key(w) for w in task.wait_for])
+        timestamp = datetime.utcnow().isoformat()
 
         result = self._claim_script(
-            keys=[task_key, claim_key],
-            args=[self.agent_id, dep_keys, wait_keys]
+            keys=[task_key, claim_key, self.QUEUE_KEY],
+            args=[self.agent_id, dep_keys, wait_keys, task.id, timestamp]
         )
 
         success = result[0] if result else False
         if not success:
             return False
 
-        task.status = TaskStatus.CLAIMED.value
-        task.assigned_to = self.agent_id
-        task.started_at = datetime.utcnow().isoformat()
-        self.redis.set(task_key, json.dumps(task.to_dict()))
-
-        self.redis.zrem(self.QUEUE_KEY, task.id)
-
         self.redis.publish("ralph:events", json.dumps({
             'event': 'task_claimed',
             'task_id': task.id,
             'agent_id': self.agent_id,
-            'timestamp': datetime.utcnow().isoformat()
+            'timestamp': timestamp
         }))
 
         return True
@@ -207,6 +229,7 @@ class TaskQueue:
         """Update task progress."""
         task = self.get(task_id)
         if task and task.assigned_to == self.agent_id:
+            old_status = task.status
             task.status = status.value
             if message:
                 if 'progress' not in task.metadata:
@@ -216,6 +239,8 @@ class TaskQueue:
                     'timestamp': datetime.utcnow().isoformat()
                 })
             self.redis.set(self._task_key(task_id), json.dumps(task.to_dict()))
+            if old_status != status.value:
+                self._update_status_index(task_id, old_status, status.value)
 
             self.redis.publish("ralph:events", json.dumps({
                 'event': 'task_progress',
@@ -230,10 +255,12 @@ class TaskQueue:
         """Mark task as complete."""
         task = self.get(task_id)
         if task and task.assigned_to == self.agent_id:
+            old_status = task.status
             task.status = TaskStatus.COMPLETED.value
             task.completed_at = datetime.utcnow().isoformat()
             task.result = result
             self.redis.set(self._task_key(task_id), json.dumps(task.to_dict()))
+            self._update_status_index(task_id, old_status, TaskStatus.COMPLETED.value)
 
             self.redis.delete(f"{self.CLAIMED_KEY}:{task_id}")
 
@@ -249,10 +276,12 @@ class TaskQueue:
         """Mark task as failed."""
         task = self.get(task_id)
         if task and task.assigned_to == self.agent_id:
+            old_status = task.status
             task.status = TaskStatus.FAILED.value
             task.error = error
             task.completed_at = datetime.utcnow().isoformat()
             self.redis.set(self._task_key(task_id), json.dumps(task.to_dict()))
+            self._update_status_index(task_id, old_status, TaskStatus.FAILED.value)
 
             self.redis.delete(f"{self.CLAIMED_KEY}:{task_id}")
 
@@ -268,10 +297,12 @@ class TaskQueue:
         """Mark task as blocked."""
         task = self.get(task_id)
         if task and task.assigned_to == self.agent_id:
+            old_status = task.status
             task.status = TaskStatus.BLOCKED.value
             task.metadata['blocked_reason'] = reason
             task.metadata['blocked_at'] = datetime.utcnow().isoformat()
             self.redis.set(self._task_key(task_id), json.dumps(task.to_dict()))
+            self._update_status_index(task_id, old_status, TaskStatus.BLOCKED.value)
 
             self.redis.publish("ralph:events", json.dumps({
                 'event': 'task_blocked',
@@ -313,13 +344,22 @@ class TaskQueue:
 
         return tasks
 
-    def get_by_status(self, status: TaskStatus) -> List[Task]:
-        """Get all tasks with a specific status."""
+    def get_by_status(self, status: TaskStatus, limit: int = 100) -> List[Task]:
+        """Get tasks by status using the sorted set index.
+
+        Uses O(log(N)+M) complexity instead of O(N) scan.
+        Falls back to scan for tasks not yet in the index (backward compat).
+        """
+        status_val = status.value if isinstance(status, TaskStatus) else status
+        task_ids = self.redis.zrange(self._status_index_key(status_val), 0, limit - 1)
         tasks = []
-        for key in self.redis.scan_iter(f"{self.TASK_PREFIX}:*"):
-            task = self.get(key.replace(f"{self.TASK_PREFIX}:", ""))
-            if task and task.status == status.value:
+
+        for tid in task_ids:
+            tid = tid.decode() if isinstance(tid, bytes) else tid
+            task = self.get(tid)
+            if task and task.status == status_val:
                 tasks.append(task)
+
         return tasks
 
     def get_artifacts(self, task_id: str) -> List[Dict]:
@@ -333,10 +373,12 @@ class TaskQueue:
         """Release claim on a task (put back in queue)."""
         task = self.get(task_id)
         if task and task.assigned_to == self.agent_id:
+            old_status = task.status
             task.status = TaskStatus.PENDING.value
             task.assigned_to = None
             task.started_at = None
             self.redis.set(self._task_key(task_id), json.dumps(task.to_dict()))
+            self._update_status_index(task_id, old_status, TaskStatus.PENDING.value)
 
             self.redis.delete(f"{self.CLAIMED_KEY}:{task_id}")
 

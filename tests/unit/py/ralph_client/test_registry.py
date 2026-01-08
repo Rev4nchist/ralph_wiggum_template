@@ -76,13 +76,14 @@ class TestHeartbeat:
     def test_heartbeat_updates_ttl(self, registry, mock_redis, agent_id):
         """Heartbeat refreshes TTL on heartbeat key."""
         registry.register(agent_id, "frontend", ["implement"])
-        original_ttl = mock_redis.ttl(f"ralph:heartbeats:{agent_id}")
 
-        time.sleep(0.1)
+        time.sleep(1.5)
+        old_ttl = mock_redis.ttl(f"ralph:heartbeats:{agent_id}")
+
         registry.heartbeat(agent_id)
 
         new_ttl = mock_redis.ttl(f"ralph:heartbeats:{agent_id}")
-        assert new_ttl >= original_ttl
+        assert new_ttl > old_ttl, "Heartbeat should refresh TTL"
 
     @pytest.mark.p0
     def test_is_alive_returns_true_with_heartbeat(self, registry, mock_redis, agent_id):

@@ -10,7 +10,7 @@ import redis
 class AgentRegistry:
     """Manages agent registration, heartbeats, and discovery."""
 
-    HEARTBEAT_TTL = 30
+    HEARTBEAT_TTL = 15
     REGISTRY_KEY = "ralph:agents"
     HEARTBEAT_KEY = "ralph:heartbeats"
 

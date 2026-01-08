@@ -78,10 +78,10 @@ class RalphClient:
         while self._running:
             try:
                 self.registry.heartbeat(self.agent_id)
-                time.sleep(10)
+                time.sleep(5)
             except Exception as e:
                 print(f"Heartbeat error: {e}")
-                time.sleep(5)
+                time.sleep(2)
 
     def _subscribe_to_messages(self) -> None:
         """Subscribe to agent-specific message channel."""

@@ -1,6 +1,8 @@
 """File Locking - Pessimistic locking for collaborative editing"""
 
 import json
+import os
+import re
 from datetime import datetime
 from typing import Dict, List, Optional, Set
 
@@ -19,14 +21,66 @@ class FileLock:
     LOCK_PREFIX = "ralph:locks:file"
     DEFAULT_TTL = 300
 
+    UNLOCK_SCRIPT = """
+    local lock_key = KEYS[1]
+    local agent_id = ARGV[1]
+
+    local lock_data = redis.call('GET', lock_key)
+    if not lock_data then
+        return {true, 'no_lock'}
+    end
+
+    local lock = cjson.decode(lock_data)
+    if lock.agent_id ~= agent_id then
+        return {false, 'not_owner'}
+    end
+
+    redis.call('DEL', lock_key)
+    return {true, 'released'}
+    """
+
+    EXTEND_SCRIPT = """
+    local lock_key = KEYS[1]
+    local agent_id = ARGV[1]
+    local ttl = tonumber(ARGV[2])
+
+    local lock_data = redis.call('GET', lock_key)
+    if not lock_data then
+        return {false, 'no_lock'}
+    end
+
+    local lock = cjson.decode(lock_data)
+    if lock.agent_id ~= agent_id then
+        return {false, 'not_owner'}
+    end
+
+    redis.call('EXPIRE', lock_key, ttl)
+    return {true, 'extended'}
+    """
+
     def __init__(self, redis_client: redis.Redis, agent_id: str):
         self.redis = redis_client
         self.agent_id = agent_id
         self._held_locks: Set[str] = set()
+        self._unlock_script = self.redis.register_script(self.UNLOCK_SCRIPT)
+        self._extend_script = self.redis.register_script(self.EXTEND_SCRIPT)
+
+    def _validate_path(self, file_path: str) -> str:
+        """Validate and normalize file path to prevent traversal attacks."""
+        normalized = os.path.normpath(file_path)
+
+        if '..' in normalized:
+            raise ValueError(f"Path traversal detected: {file_path}")
+
+        if not re.match(r'^[\w\-./\\]+$', normalized):
+            raise ValueError(f"Invalid characters in path: {file_path}")
+
+        return normalized
 
     def _lock_key(self, file_path: str) -> str:
         """Generate Redis key for file lock."""
-        safe_path = file_path.replace('/', ':').replace('\\', ':')
+        validated = self._validate_path(file_path)
+        safe_path = validated.replace('/', ':').replace('\\', ':')
         return f"{self.LOCK_PREFIX}:{safe_path}"
 
     def acquire(self, file_path: str, ttl: int = DEFAULT_TTL) -> bool:
@@ -65,23 +119,21 @@ class FileLock:
         return False
 
     def release(self, file_path: str) -> bool:
-        """Release lock on a file."""
+        """Release lock on a file atomically."""
         key = self._lock_key(file_path)
 
-        existing = self.redis.get(key)
-        if existing:
-            data = json.loads(existing)
-            if data['agent_id'] == self.agent_id:
-                self.redis.delete(key)
-                self._held_locks.discard(file_path)
+        result = self._unlock_script(keys=[key], args=[self.agent_id])
+        success = result[0] if result else False
 
-                self.redis.publish("ralph:events", json.dumps({
-                    'event': 'file_unlocked',
-                    'agent_id': self.agent_id,
-                    'file_path': file_path,
-                    'timestamp': datetime.utcnow().isoformat()
-                }))
-                return True
+        if success:
+            self._held_locks.discard(file_path)
+            self.redis.publish("ralph:events", json.dumps({
+                'event': 'file_unlocked',
+                'agent_id': self.agent_id,
+                'file_path': file_path,
+                'timestamp': datetime.utcnow().isoformat()
+            }))
+            return True
 
         return False
 
@@ -94,17 +146,13 @@ class FileLock:
         return released
 
     def extend(self, file_path: str, ttl: int = DEFAULT_TTL) -> bool:
-        """Extend TTL on a lock we own."""
+        """Extend TTL on a lock we own atomically."""
         key = self._lock_key(file_path)
 
-        existing = self.redis.get(key)
-        if existing:
-            data = json.loads(existing)
-            if data['agent_id'] == self.agent_id:
-                self.redis.expire(key, ttl)
-                return True
+        result = self._extend_script(keys=[key], args=[self.agent_id, ttl])
+        success = result[0] if result else False
 
-        return False
+        return success
 
     def is_locked(self, file_path: str) -> bool:
         """Check if file is currently locked."""

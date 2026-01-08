@@ -153,7 +153,7 @@ class TestAtomicTaskClaiming:
 
     @pytest.mark.p0
     def test_claim_updates_task_status(self, queue, mock_redis, agent_id):
-        """Successful claim updates task status to CLAIMED."""
+        """Successful claim calls script with correct args to update task status atomically."""
         task = Task(
             id="task-006",
             title="Status test",
@@ -164,11 +164,16 @@ class TestAtomicTaskClaiming:
         mock_redis.set(f"ralph:tasks:data:{task.id}", json.dumps(task.to_dict()))
 
         queue._claim_script = MagicMock(return_value=[True, 'claimed'])
-        queue.claim(task)
+        result = queue.claim(task)
 
-        stored = json.loads(mock_redis.get(f"ralph:tasks:data:{task.id}"))
-        assert stored["status"] == TaskStatus.CLAIMED.value
-        assert stored["assigned_to"] == agent_id
+        assert result is True
+        queue._claim_script.assert_called_once()
+        call_args = queue._claim_script.call_args
+        assert call_args.kwargs['keys'][0] == f"ralph:tasks:data:{task.id}"
+        assert call_args.kwargs['keys'][1] == f"ralph:tasks:claimed:{task.id}"
+        assert call_args.kwargs['keys'][2] == "ralph:tasks:queue"
+        assert call_args.kwargs['args'][0] == agent_id
+        assert task.id in call_args.kwargs['args'][3]
 
 
 class TestTaskQueueOperations:
@@ -308,3 +313,110 @@ class TestTaskDataclass:
         assert task.title == "Deserialize test"
         assert task.priority == 7
         assert task.status == "in_progress"
+
+
+class TestStatusIndex:
+    """P1 High: Status index for efficient O(log N) lookups."""
+
+    @pytest.fixture
+    def queue(self, mock_redis, agent_id):
+        return TaskQueue(mock_redis, agent_id)
+
+    @pytest.mark.p1
+    def test_enqueue_adds_to_status_index(self, queue, mock_redis):
+        """Enqueue adds task to the pending status index."""
+        task = Task(id="idx-001", title="Index test", description="Test")
+
+        queue.enqueue(task)
+
+        members = mock_redis.zrange("ralph:tasks:by_status:pending", 0, -1)
+        assert "idx-001" in members
+
+    @pytest.mark.p1
+    def test_complete_updates_status_index(self, queue, mock_redis, agent_id):
+        """Complete moves task from old status to completed index."""
+        task = Task(id="idx-002", title="Complete index test", description="Test")
+        queue.enqueue(task)
+        task.assigned_to = agent_id
+        mock_redis.set(f"ralph:tasks:data:{task.id}", json.dumps(task.to_dict()))
+
+        queue.complete("idx-002", {"output": "done"})
+
+        pending = mock_redis.zrange("ralph:tasks:by_status:pending", 0, -1)
+        completed = mock_redis.zrange("ralph:tasks:by_status:completed", 0, -1)
+        assert "idx-002" not in pending
+        assert "idx-002" in completed
+
+    @pytest.mark.p1
+    def test_fail_updates_status_index(self, queue, mock_redis, agent_id):
+        """Fail moves task from old status to failed index."""
+        task = Task(id="idx-003", title="Fail index test", description="Test")
+        queue.enqueue(task)
+        task.assigned_to = agent_id
+        mock_redis.set(f"ralph:tasks:data:{task.id}", json.dumps(task.to_dict()))
+
+        queue.fail("idx-003", "Something broke")
+
+        pending = mock_redis.zrange("ralph:tasks:by_status:pending", 0, -1)
+        failed = mock_redis.zrange("ralph:tasks:by_status:failed", 0, -1)
+        assert "idx-003" not in pending
+        assert "idx-003" in failed
+
+    @pytest.mark.p1
+    def test_count_by_status(self, queue, mock_redis):
+        """count_by_status returns correct count from index."""
+        for i in range(5):
+            task = Task(id=f"cnt-{i}", title=f"Count test {i}", description="Test")
+            queue.enqueue(task)
+
+        count = queue.count_by_status("pending")
+
+        assert count == 5
+
+    @pytest.mark.p1
+    def test_get_by_status_uses_index(self, queue, mock_redis):
+        """get_by_status retrieves tasks from the index."""
+        for i in range(3):
+            task = Task(id=f"get-idx-{i}", title=f"Get by status {i}", description="Test")
+            queue.enqueue(task)
+
+        tasks = queue.get_by_status(TaskStatus.PENDING)
+
+        assert len(tasks) == 3
+        task_ids = [t.id for t in tasks]
+        assert "get-idx-0" in task_ids
+        assert "get-idx-1" in task_ids
+        assert "get-idx-2" in task_ids
+
+    @pytest.mark.p1
+    def test_release_claim_updates_status_index(self, queue, mock_redis, agent_id):
+        """release_claim moves task back to pending in index."""
+        task = Task(id="rel-idx-001", title="Release test", description="Test")
+        queue.enqueue(task)
+        task.assigned_to = agent_id
+        task.status = TaskStatus.CLAIMED.value
+        mock_redis.set(f"ralph:tasks:data:{task.id}", json.dumps(task.to_dict()))
+        mock_redis.zrem("ralph:tasks:by_status:pending", task.id)
+        mock_redis.zadd("ralph:tasks:by_status:claimed", {task.id: 1})
+
+        queue.release_claim("rel-idx-001")
+
+        claimed = mock_redis.zrange("ralph:tasks:by_status:claimed", 0, -1)
+        pending = mock_redis.zrange("ralph:tasks:by_status:pending", 0, -1)
+        assert "rel-idx-001" not in claimed
+        assert "rel-idx-001" in pending
+
+    @pytest.mark.p1
+    def test_block_updates_status_index(self, queue, mock_redis, agent_id):
+        """block moves task to blocked status in index."""
+        task = Task(id="blk-idx-001", title="Block test", description="Test")
+        queue.enqueue(task)
+        task.assigned_to = agent_id
+        mock_redis.set(f"ralph:tasks:data:{task.id}", json.dumps(task.to_dict()))
+
+        queue.block("blk-idx-001", "Waiting for human input")
+
+        pending = mock_redis.zrange("ralph:tasks:by_status:pending", 0, -1)
+        blocked = mock_redis.zrange("ralph:tasks:by_status:blocked", 0, -1)
+        assert "blk-idx-001" not in pending
+        assert "blk-idx-001" in blocked

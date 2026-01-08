@@ -7,6 +7,19 @@ from .client import RalphClient
 from .locks import FileLock
 from .tasks import TaskQueue, Task, TaskStatus
 from .registry import AgentRegistry
+from .auth import TokenAuth, AuthLevel, AuthError, AgentCredentials, require_auth
+from .security import (
+    sanitize,
+    sanitize_dict,
+    is_sensitive,
+    mask_partially,
+    SecureLogger,
+    SanitizedException,
+    REDACTED,
+)
+from .cleanup import OrphanCleaner, OrphanedTask
+from .streams import EventStream, StreamMessage
+from .constants import RedisKeys, TaskStatusConst, TaskTypeConst, Defaults
 
 __all__ = [
     'RalphClient',
@@ -14,7 +27,27 @@ __all__ = [
     'TaskQueue',
     'Task',
     'TaskStatus',
-    'AgentRegistry'
+    'AgentRegistry',
+    'TokenAuth',
+    'AuthLevel',
+    'AuthError',
+    'AgentCredentials',
+    'require_auth',
+    'sanitize',
+    'sanitize_dict',
+    'is_sensitive',
+    'mask_partially',
+    'SecureLogger',
+    'SanitizedException',
+    'REDACTED',
+    'OrphanCleaner',
+    'OrphanedTask',
+    'EventStream',
+    'StreamMessage',
+    'RedisKeys',
+    'TaskStatusConst',
+    'TaskTypeConst',
+    'Defaults',
 ]
 
 __version__ = '0.1.0'

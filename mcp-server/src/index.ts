@@ -36,6 +36,27 @@ const LIBRARIAN_TIMEOUT = parseInt(process.env.LIBRARIAN_TIMEOUT || "60000", 10)
 
 let redis: Redis;
 
+function sanitizeLibrarianArg(arg: string): string {
+  if (/[;&|`$(){}[\]<>\\'\"\n\r]/.test(arg)) {
+    throw new Error(`Invalid characters in librarian argument`);
+  }
+  if (arg.length > 1000) {
+    throw new Error('Argument too long');
+  }
+  return arg;
+}
+
+function validateFilePath(filePath: string): string {
+  const normalized = filePath.replace(/\\/g, '/');
+  if (normalized.includes('..')) {
+    throw new Error('Path traversal detected');
+  }
+  if (!/^[\w\-./]+$/.test(normalized)) {
+    throw new Error('Invalid characters in file path');
+  }
+  return normalized;
+}
+
 // =============================================================================
 // Librarian CLI Integration
 // =============================================================================
@@ -64,10 +85,13 @@ async function runLibrarianCommand(
   args: string[],
   timeout: number = LIBRARIAN_TIMEOUT
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  const sanitizedArgs = args.map(sanitizeLibrarianArg);
+
   return new Promise((resolve, reject) => {
-    const proc = spawn(LIBRARIAN_PATH, args, {
+    const proc = spawn(LIBRARIAN_PATH, sanitizedArgs, {
       timeout,
-      shell: process.platform === "win32",
+      shell: false,
+      windowsHide: true,
     });
 
     let stdout = "";
@@ -348,12 +372,21 @@ async function validateDependencies(
   return { valid: true };
 }
 
-try {
-  redis = new Redis(REDIS_URL);
-} catch (e) {
-  console.error("Failed to connect to Redis:", e);
-  process.exit(1);
-}
+redis = new Redis(REDIS_URL, {
+  retryStrategy(times) {
+    const delay = Math.min(times * 100, 3000);
+    console.error(`Redis reconnecting, attempt ${times}, delay ${delay}ms`);
+    return delay;
+  },
+  maxRetriesPerRequest: 3,
+  reconnectOnError(err) {
+    return err.message.includes('READONLY');
+  }
+});
+
+redis.on('error', (err) => console.error('Redis error:', err));
+redis.on('reconnecting', () => console.log('Reconnecting to Redis...'));
+redis.on('connect', () => console.log('Redis connected'));
 
 const server = new Server(
   {
@@ -840,11 +873,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "ralph_lock_file": {
         const { file_path, agent_id, ttl } = validatedArgs as any;
-        const lockKey = `ralph:locks:file:${file_path.replace(/[/\\]/g, ":")}`;
+        const validatedPath = validateFilePath(file_path);
+        const lockKey = `ralph:locks:file:${validatedPath.replace(/[/\\]/g, ":")}`;
 
         const lockData = JSON.stringify({
           agent_id,
-          file_path,
+          file_path: validatedPath,
           acquired_at: new Date().toISOString(),
           ttl,
         });
@@ -855,7 +889,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [
             {
               type: "text",
-              text: JSON.stringify({ success: !!acquired, file_path, agent_id }),
+              text: JSON.stringify({ success: !!acquired, file_path: validatedPath, agent_id }),
             },
           ],
         };
@@ -863,7 +897,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "ralph_unlock_file": {
         const { file_path, agent_id } = validatedArgs as any;
-        const lockKey = `ralph:locks:file:${file_path.replace(/[/\\]/g, ":")}`;
+        const validatedPath = validateFilePath(file_path);
+        const lockKey = `ralph:locks:file:${validatedPath.replace(/[/\\]/g, ":")}`;
 
         const existing = await redis.get(lockKey);
         if (existing) {
