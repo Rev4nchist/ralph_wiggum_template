@@ -70,9 +70,58 @@ class TaskQueue:
     TASK_PREFIX = "ralph:tasks:data"
     CLAIMED_KEY = "ralph:tasks:claimed"
 
+    # Lua script for atomic claim with dependency checking
+    CLAIM_SCRIPT = """
+    local task_key = KEYS[1]
+    local claim_key = KEYS[2]
+    local agent_id = ARGV[1]
+    local dep_keys = cjson.decode(ARGV[2])
+    local wait_keys = cjson.decode(ARGV[3])
+
+    -- Check if already claimed
+    if redis.call('EXISTS', claim_key) == 1 then
+        return {false, 'already_claimed'}
+    end
+
+    -- Check dependencies are completed
+    for i, dep_key in ipairs(dep_keys) do
+        local dep_data = redis.call('GET', dep_key)
+        if not dep_data then
+            return {false, 'missing_dependency'}
+        end
+        local dep = cjson.decode(dep_data)
+        if dep.status ~= 'completed' then
+            return {false, 'dependency_not_completed'}
+        end
+    end
+
+    -- Check wait_for tasks are completed
+    for i, wait_key in ipairs(wait_keys) do
+        local wait_data = redis.call('GET', wait_key)
+        if not wait_data then
+            return {false, 'missing_wait_task'}
+        end
+        local wait_task = cjson.decode(wait_data)
+        if wait_task.status ~= 'completed' then
+            return {false, 'wait_task_not_completed'}
+        end
+    end
+
+    -- Atomically claim the task
+    redis.call('SET', claim_key, agent_id, 'EX', 3600, 'NX')
+
+    -- Verify we got the claim (NX means only set if not exists)
+    if redis.call('GET', claim_key) ~= agent_id then
+        return {false, 'claim_race_lost'}
+    end
+
+    return {true, 'claimed'}
+    """
+
     def __init__(self, redis_client: redis.Redis, agent_id: str):
         self.redis = redis_client
         self.agent_id = agent_id
+        self._claim_script = self.redis.register_script(self.CLAIM_SCRIPT)
 
     def _task_key(self, task_id: str) -> str:
         return f"{self.TASK_PREFIX}:{task_id}"
@@ -108,20 +157,26 @@ class TaskQueue:
         return None
 
     def claim(self, task: Task) -> bool:
-        """Attempt to claim a task."""
-        if not self._can_claim(task):
-            return False
+        """Attempt to claim a task atomically with dependency checking."""
+        task_key = self._task_key(task.id)
+        claim_key = f"{self.CLAIMED_KEY}:{task.id}"
 
-        claimed = self.redis.setnx(f"{self.CLAIMED_KEY}:{task.id}", self.agent_id)
-        if not claimed:
-            return False
+        dep_keys = json.dumps([self._task_key(d) for d in task.dependencies])
+        wait_keys = json.dumps([self._task_key(w) for w in task.wait_for])
 
-        self.redis.expire(f"{self.CLAIMED_KEY}:{task.id}", 3600)
+        result = self._claim_script(
+            keys=[task_key, claim_key],
+            args=[self.agent_id, dep_keys, wait_keys]
+        )
+
+        success = result[0] if result else False
+        if not success:
+            return False
 
         task.status = TaskStatus.CLAIMED.value
         task.assigned_to = self.agent_id
         task.started_at = datetime.utcnow().isoformat()
-        self.redis.set(self._task_key(task.id), json.dumps(task.to_dict()))
+        self.redis.set(task_key, json.dumps(task.to_dict()))
 
         self.redis.zrem(self.QUEUE_KEY, task.id)
 
@@ -135,7 +190,7 @@ class TaskQueue:
         return True
 
     def _can_claim(self, task: Task) -> bool:
-        """Check if task dependencies are satisfied."""
+        """Check if task dependencies are satisfied (non-atomic, use for display only)."""
         for dep_id in task.dependencies:
             dep = self.get(dep_id)
             if not dep or dep.status != TaskStatus.COMPLETED.value:
