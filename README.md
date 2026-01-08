@@ -4,7 +4,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-Ready%20to%20Use-brightgreen?style=for-the-badge" alt="Status">
-  <img src="https://img.shields.io/badge/Tests-93%20Passing-success?style=for-the-badge" alt="Tests">
+  <img src="https://img.shields.io/badge/Tests-482%20Passing-success?style=for-the-badge" alt="Tests">
   <img src="https://img.shields.io/badge/MCP%20Tools-18-blue?style=for-the-badge" alt="MCP Tools">
   <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="License">
 </p>
@@ -158,6 +158,8 @@ cd ralph_wiggum_template
 
 cp .env.example .env
 # Edit .env with your API keys
+
+# ⚠️ Security: See docs/SECRETS_MANAGEMENT.md for proper key handling
 ```
 
 ### 2️⃣ Install Dependencies
@@ -198,8 +200,8 @@ Add to your `~/.mcp.json`:
 ### 5️⃣ Verify Installation
 
 ```bash
-# Run all 93 tests
-npm test && python -m pytest tests/unit/py/ -v
+# Run all 482 tests
+npm test && python -m pytest tests/ -v
 ```
 
 **You're ready!** Open Claude Code and try: `Use ralph_list_agents to see active agents`
@@ -225,8 +227,8 @@ Pre-built agent personas for different development phases:
 
 <table>
 <tr>
-<td align="center"><h1>93</h1><p>Tests Passing</p></td>
-<td align="center"><h1>47</h1><p>P0 Critical Tests</p></td>
+<td align="center"><h1>482</h1><p>Tests Passing</p></td>
+<td align="center"><h1>164</h1><p>New Tests Added</p></td>
 <td align="center"><h1>0</h1><p>Known Race Conditions</p></td>
 </tr>
 </table>
@@ -238,6 +240,10 @@ Pre-built agent personas for different development phases:
 | Agent Registry | 12 | Dead agents don't receive tasks |
 | Cycle Detection | 15 | Prevents dependency deadlocks |
 | Task Queue Ops | 10 | Reliable task lifecycle |
+| MCP Server Tools | 53 | All 17 tools validated |
+| Hook System | 51 | Automation triggers tested |
+| Memory System | 35 | Agent persistence verified |
+| Telegram Scripts | 25 | Notification flow validated |
 
 ---
 
