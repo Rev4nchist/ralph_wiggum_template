@@ -4,7 +4,7 @@ import os
 import json
 import time
 import threading
-from typing import Optional, Dict, Any, Callable
+from typing import Optional, Dict, Any, Callable, List
 from datetime import datetime
 
 import redis
@@ -12,6 +12,11 @@ import redis
 from .registry import AgentRegistry
 from .locks import FileLock
 from .tasks import TaskQueue, Task
+
+# Import memory system
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from memory.project_memory import ProjectMemory
 
 
 class RalphClient:
@@ -39,6 +44,13 @@ class RalphClient:
         self.registry = AgentRegistry(self.redis)
         self.task_queue = TaskQueue(self.redis, self.agent_id)
         self.file_lock = FileLock(self.redis, self.agent_id)
+
+        self.project_id = os.environ.get('RALPH_PROJECT_ID', 'default')
+        self.memory = ProjectMemory(
+            project_id=self.project_id,
+            agent_id=self.agent_id,
+            redis_client=self.redis
+        )
 
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._running = False
@@ -141,13 +153,47 @@ class RalphClient:
         """Get list of currently active agents."""
         return self.registry.get_active_agents()
 
-    def claim_task(self, task: Task) -> bool:
-        """Attempt to claim a task from the queue."""
-        return self.task_queue.claim(task)
+    def claim_task(self, task: Task) -> Dict[str, Any]:
+        """Attempt to claim a task from the queue with memory context."""
+        claimed = self.task_queue.claim(task)
+        if not claimed:
+            return {'claimed': False, 'task': None, 'context': None, 'memories': []}
 
-    def complete_task(self, task_id: str, result: Dict[str, Any]) -> None:
-        """Mark task as complete with result."""
+        task_context = self.memory.get_task_context(task.id) if hasattr(task, 'id') else {}
+        task_desc = getattr(task, 'description', '') or getattr(task, 'title', '')
+        relevant_memories = self.memory.recall(task_desc, limit=5) if task_desc else []
+
+        return {
+            'claimed': True,
+            'task': task,
+            'context': task_context,
+            'memories': relevant_memories
+        }
+
+    def complete_task(
+        self,
+        task_id: str,
+        result: Dict[str, Any],
+        summary: str = "",
+        learnings: Optional[List[str]] = None,
+        next_steps: Optional[List[str]] = None
+    ) -> None:
+        """Mark task as complete with result and commit learnings to memory."""
         self.task_queue.complete(task_id, result)
+
+        if summary:
+            self.memory.commit_task(
+                task_id=task_id,
+                summary=summary,
+                learnings=learnings or []
+            )
+
+        if next_steps:
+            self.memory.handoff(
+                task_id=task_id,
+                summary=summary or f"Task {task_id} completed",
+                next_steps=next_steps
+            )
 
     def fail_task(self, task_id: str, error: str) -> None:
         """Mark task as failed."""
@@ -207,3 +253,49 @@ class RalphClient:
                     pass
             return data
         return None
+
+    def remember(
+        self,
+        content: str,
+        category: str = "general",
+        tags: Optional[List[str]] = None,
+        task_id: Optional[str] = None
+    ) -> str:
+        """Store a memory for future recall."""
+        return self.memory.remember(
+            content=content,
+            category=category,
+            tags=tags or [],
+            task_id=task_id
+        )
+
+    def recall(
+        self,
+        query: str,
+        category: Optional[str] = None,
+        task_id: Optional[str] = None,
+        limit: int = 10
+    ) -> List[Dict]:
+        """Search memories by query."""
+        return self.memory.recall(
+            query=query,
+            category=category,
+            task_id=task_id,
+            limit=limit
+        )
+
+    def get_project_context(self) -> Dict[str, Any]:
+        """Get accumulated project context."""
+        return self.memory.get_project_context()
+
+    def note_architecture(self, decision: str, rationale: str = "") -> str:
+        """Record an architecture decision."""
+        return self.memory.note_architecture(decision, rationale)
+
+    def note_pattern(self, pattern: str, example: str = "") -> str:
+        """Record a discovered pattern."""
+        return self.memory.note_pattern(pattern, example)
+
+    def note_blocker(self, blocker: str, resolution: str = "") -> str:
+        """Record a blocker and its resolution."""
+        return self.memory.note_blocker(blocker, resolution)

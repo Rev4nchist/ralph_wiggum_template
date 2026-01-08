@@ -1,0 +1,109 @@
+{
+  "project": "ralph-wiggum-test",
+  "tasks": [
+    {
+      "id": "TASK-001",
+      "title": "Set up authentication database schema",
+      "type": "backend",
+      "agent": "backend",
+      "deps": [],
+      "acceptance_criteria": ["Create migration file", "Define user model", "Add indexes for email lookup"]
+    },
+    {
+      "id": "TASK-002",
+      "title": "Implement JWT token service",
+      "type": "backend",
+      "agent": "backend",
+      "deps": [1],
+      "acceptance_criteria": ["Generate access tokens", "Validate tokens", "Handle token expiration"]
+    },
+    {
+      "id": "TASK-003",
+      "title": "Create login and registration API endpoints",
+      "type": "backend",
+      "agent": "backend",
+      "deps": [1, 2],
+      "acceptance_criteria": ["POST /api/auth/register", "POST /api/auth/login", "POST /api/auth/logout"]
+    },
+    {
+      "id": "TASK-004",
+      "title": "Build React login form component",
+      "type": "frontend",
+      "agent": "frontend",
+      "deps": [3],
+      "acceptance_criteria": ["Form UI with inputs", "Client-side validation", "Error handling"]
+    },
+    {
+      "id": "TASK-005",
+      "title": "Implement protected route wrapper",
+      "type": "frontend",
+      "agent": "frontend",
+      "deps": [3],
+      "acceptance_criteria": ["Check auth state", "Redirect unauthenticated users", "Loading state handling"]
+    },
+    {
+      "id": "TASK-006",
+      "title": "Create authentication context",
+      "type": "frontend",
+      "agent": "frontend",
+      "deps": [4, 5],
+      "acceptance_criteria": ["AuthProvider component", "useAuth hook", "Token persistence"]
+    },
+    {
+      "id": "TASK-007",
+      "title": "Write unit tests for auth API",
+      "type": "testing",
+      "agent": "test-architect",
+      "deps": [3],
+      "acceptance_criteria": ["Test registration flow", "Test login flow", "Test error cases"]
+    },
+    {
+      "id": "TASK-008",
+      "title": "Write E2E tests for login flow",
+      "type": "testing",
+      "agent": "test-architect",
+      "deps": [6, 7],
+      "acceptance_criteria": ["Test happy path", "Test error states", "Test session persistence"]
+    },
+    {
+      "id": "TASK-009",
+      "title": "Security audit for authentication",
+      "type": "security",
+      "agent": "security-auditor",
+      "deps": [3, 6],
+      "acceptance_criteria": ["SQL injection check", "XSS vulnerability scan", "Password hashing verification"]
+    },
+    {
+      "id": "TASK-010",
+      "title": "Update API documentation",
+      "type": "docs",
+      "agent": "docs-writer",
+      "deps": [3],
+      "acceptance_criteria": ["Document endpoints", "Add request/response examples", "Document error codes"]
+    },
+    {
+      "id": "TASK-011",
+      "title": "Debug login error handling",
+      "type": "debugging",
+      "agent": "debugger",
+      "deps": [4],
+      "acceptance_criteria": ["Debug login error handling"]
+    },
+    {
+      "id": "TASK-012",
+      "title": "Refactor auth service for clarity",
+      "type": "refactoring",
+      "agent": "refactorer",
+      "deps": [2],
+      "acceptance_criteria": ["Refactor auth service for clarity"]
+    },
+    {
+      "id": "TASK-013",
+      "title": "Review pull request for auth feature",
+      "type": "review",
+      "agent": "code-reviewer",
+      "deps": [8, 9],
+      "acceptance_criteria": ["Review pull request for auth feature"]
+    }
+  ]
+}

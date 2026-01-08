@@ -43,23 +43,46 @@ from_taskmaster() {
 
     mkdir -p "$PROJECT_DIR/plans"
 
-    jq '[.tasks[] | {
-        id: .id,
-        category: (if .id | test("^setup") then "setup"
-                   elif .id | test("^test") then "test"
-                   elif .id | test("^doc") then "docs"
-                   else "feature" end),
-        priority: (.priority // 5),
-        description: .title,
-        acceptance_criteria: (if .subtasks then [.subtasks[].title] else [.description] end),
-        dependencies: (.dependencies // []),
-        passes: (.status == "done"),
-        notes: (.description // ""),
-        model_hint: (if .id | test("^setup|^config") then "implementation"
-                     elif .id | test("^test|^doc") then "verification"
-                     elif .id | test("^design|^plan|^arch") then "planning"
-                     else "implementation" end)
-    }]' "$TASKMASTER_FILE" > "$OUTPUT_FILE"
+    # Get project name from directory or taskmaster config
+    local PROJECT_NAME=$(basename "$PROJECT_DIR")
+
+    jq --arg proj "$PROJECT_NAME" '{
+        project: $proj,
+        created_at: (now | strftime("%Y-%m-%dT%H:%M:%SZ")),
+        tasks: [.tasks[] | {
+            id: (if (.id | type) == "number" then "TASK-\(.id | tostring | ("00" + .)[-3:])" else .id end),
+            title: .title,
+            description: (.description // .title),
+            type: (if .title | test("(?i)security|audit|vulnerabilit|owasp|penetration") then "security"
+                   elif .title | test("(?i)debug|\\berror\\b|\\bfix\\b|\\bbug\\b|failing") then "debugging"
+                   elif .title | test("(?i)\\btest|\\bqa\\b|coverage") then "testing"
+                   elif .title | test("(?i)refactor|cleanup|smell|debt|reorganize") then "refactoring"
+                   elif .title | test("(?i)\\bdocs?\\b|readme|documentation|\\bdocument\\b|\\bguide\\b|api.doc|write.*doc|update.*doc") then "docs"
+                   elif .title | test("(?i)review|\\bpr\\b|pull.?request|code.?review") then "review"
+                   elif .title | test("(?i)\\bapi\\b|backend|database|docker|python|fastapi|server|endpoint") then "backend"
+                   elif .title | test("(?i)\\bui\\b|frontend|component|react|\\bform\\b|\\bcss\\b|plasmo|style") then "frontend"
+                   elif .title | test("(?i)setup|init|config|arch|design") then "architecture"
+                   else "general" end),
+            agent: (if .title | test("(?i)security|audit|vulnerabilit|owasp|penetration") then "security-auditor"
+                    elif .title | test("(?i)debug|\\berror\\b|\\bfix\\b|\\bbug\\b|failing") then "debugger"
+                    elif .title | test("(?i)\\btest|\\bqa\\b|coverage") then "test-architect"
+                    elif .title | test("(?i)refactor|cleanup|smell|debt|reorganize") then "refactorer"
+                    elif .title | test("(?i)\\bdocs?\\b|readme|documentation|\\bdocument\\b|\\bguide\\b|api.doc|write.*doc|update.*doc") then "docs-writer"
+                    elif .title | test("(?i)review|\\bpr\\b|pull.?request|code.?review") then "code-reviewer"
+                    elif .title | test("(?i)\\bapi\\b|backend|database|docker|python|fastapi|server|endpoint") then "backend"
+                    elif .title | test("(?i)\\bui\\b|frontend|component|react|\\bform\\b|\\bcss\\b|plasmo|style") then "frontend"
+                    else "general-purpose" end),
+            priority: (if (.priority | type) == "string" then
+                        (if .priority == "high" then 9
+                         elif .priority == "medium" then 5
+                         else 3 end)
+                       else (.priority // 5) end),
+            deps: (.dependencies // []),
+            files: [],
+            acceptance_criteria: (if .subtasks then [.subtasks[].title] else [.description // .title] end),
+            passes: (.status == "done")
+        }]
+    }' "$TASKMASTER_FILE" > "$OUTPUT_FILE"
 
     success "PRD generated at $OUTPUT_FILE"
     echo "Tasks converted: $(jq 'length' "$OUTPUT_FILE")"

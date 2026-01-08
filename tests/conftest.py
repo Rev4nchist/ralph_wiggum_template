@@ -164,3 +164,56 @@ class MockPubSub:
 def mock_pubsub():
     """Create a mock Pub/Sub instance."""
     return MockPubSub()
+
+
+# === Integration Test Fixtures ===
+
+PROJECT_ROOT = Path(__file__).parent.parent
+
+
+@pytest.fixture(scope="session")
+def project_root():
+    """Return project root path."""
+    return PROJECT_ROOT
+
+
+@pytest.fixture(scope="session")
+def redis_available():
+    """Check if Redis is available for tests."""
+    try:
+        import redis as real_redis
+        client = real_redis.Redis(host='localhost', port=6379, db=0)
+        client.ping()
+        client.close()
+        return True
+    except Exception:
+        return False
+
+
+@pytest.fixture
+def skip_if_no_redis(redis_available):
+    """Skip test if Redis is not available."""
+    if not redis_available:
+        pytest.skip("Redis not available")
+
+
+def pytest_configure(config):
+    """Configure pytest markers."""
+    config.addinivalue_line(
+        "markers", "requires_redis: marks tests that require Redis connection"
+    )
+    config.addinivalue_line(
+        "markers", "e2e: marks end-to-end tests"
+    )
+    config.addinivalue_line(
+        "markers", "slow: marks slow-running tests"
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    """Add markers based on test location."""
+    for item in items:
+        if "e2e" in str(item.fspath):
+            item.add_marker(pytest.mark.e2e)
+        if "memory" in str(item.fspath):
+            item.add_marker(pytest.mark.requires_redis)

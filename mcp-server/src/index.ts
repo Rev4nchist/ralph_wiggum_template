@@ -493,6 +493,36 @@ const TOOLS: Record<string, z.ZodSchema> = {
   librarian_find_library: z.object({
     name: z.string().describe("Library name to search for (e.g., react, next, prisma)"),
   }),
+
+  // Memory MCP tools - persistent context across agents
+  ralph_memory_store: z.object({
+    content: z.string().describe("Memory content to store"),
+    category: z.enum(["architecture", "pattern", "blocker", "decision", "learning", "general"]).default("general"),
+    tags: z.array(z.string()).optional().describe("Tags for categorization"),
+    task_id: z.string().optional().describe("Associated task ID"),
+    project_id: z.string().optional().describe("Project ID (defaults to RALPH_PROJECT_ID env)"),
+  }),
+
+  ralph_memory_recall: z.object({
+    query: z.string().describe("Search query for memories"),
+    category: z.string().optional().describe("Filter by category"),
+    task_id: z.string().optional().describe("Filter by task ID"),
+    limit: z.number().default(10).describe("Maximum results to return"),
+    project_id: z.string().optional().describe("Project ID (defaults to RALPH_PROJECT_ID env)"),
+  }),
+
+  ralph_memory_context: z.object({
+    task_id: z.string().optional().describe("Get task-specific context"),
+    project_id: z.string().optional().describe("Project ID (defaults to RALPH_PROJECT_ID env)"),
+  }),
+
+  ralph_memory_handoff: z.object({
+    task_id: z.string().describe("Task being handed off"),
+    summary: z.string().describe("Summary of work completed"),
+    next_steps: z.array(z.string()).describe("Recommended next steps"),
+    blockers: z.array(z.string()).optional().describe("Any blockers encountered"),
+    project_id: z.string().optional().describe("Project ID (defaults to RALPH_PROJECT_ID env)"),
+  }),
 };
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -712,6 +742,67 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             name: { type: "string", description: "Library name to search for (e.g., react, next, prisma)" },
           },
           required: ["name"],
+        },
+      },
+      // Memory MCP tools
+      {
+        name: "ralph_memory_store",
+        description: "Store a memory for future recall. Use for architecture decisions, patterns discovered, blockers, and learnings.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            content: { type: "string", description: "Memory content to store" },
+            category: {
+              type: "string",
+              enum: ["architecture", "pattern", "blocker", "decision", "learning", "general"],
+              default: "general",
+            },
+            tags: { type: "array", items: { type: "string" }, description: "Tags for categorization" },
+            task_id: { type: "string", description: "Associated task ID" },
+            project_id: { type: "string", description: "Project ID (defaults to env)" },
+          },
+          required: ["content"],
+        },
+      },
+      {
+        name: "ralph_memory_recall",
+        description: "Search memories by query. Returns relevant memories for context loading.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Search query for memories" },
+            category: { type: "string", description: "Filter by category" },
+            task_id: { type: "string", description: "Filter by task ID" },
+            limit: { type: "number", default: 10, description: "Maximum results" },
+            project_id: { type: "string", description: "Project ID (defaults to env)" },
+          },
+          required: ["query"],
+        },
+      },
+      {
+        name: "ralph_memory_context",
+        description: "Get accumulated project or task context. Load this before starting work.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            task_id: { type: "string", description: "Get task-specific context" },
+            project_id: { type: "string", description: "Project ID (defaults to env)" },
+          },
+        },
+      },
+      {
+        name: "ralph_memory_handoff",
+        description: "Leave notes for the next agent. Use when completing a task to preserve context.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            task_id: { type: "string", description: "Task being handed off" },
+            summary: { type: "string", description: "Summary of work completed" },
+            next_steps: { type: "array", items: { type: "string" }, description: "Recommended next steps" },
+            blockers: { type: "array", items: { type: "string" }, description: "Any blockers encountered" },
+            project_id: { type: "string", description: "Project ID (defaults to env)" },
+          },
+          required: ["task_id", "summary", "next_steps"],
         },
       },
     ],
@@ -1296,6 +1387,176 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             isError: true,
           };
         }
+      }
+
+      // =======================================================================
+      // Memory MCP Tools - Persistent Context Across Agents
+      // =======================================================================
+
+      case "ralph_memory_store": {
+        const { content, category, tags, task_id, project_id } = validatedArgs as any;
+        const projId = project_id || process.env.RALPH_PROJECT_ID || "default";
+        const memoryId = `mem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+
+        const memory = {
+          id: memoryId,
+          content,
+          category: category || "general",
+          tags: tags || [],
+          task_id: task_id || null,
+          created_at: new Date().toISOString(),
+          agent_id: "claude-code",
+        };
+
+        await redis.hset(`claude_mem:${projId}:memories`, memoryId, JSON.stringify(memory));
+
+        if (task_id) {
+          await redis.sadd(`claude_mem:${projId}:task:${task_id}:memories`, memoryId);
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ success: true, memory_id: memoryId, project_id: projId }),
+            },
+          ],
+        };
+      }
+
+      case "ralph_memory_recall": {
+        const { query, category, task_id, limit, project_id } = validatedArgs as any;
+        const projId = project_id || process.env.RALPH_PROJECT_ID || "default";
+        const maxResults = limit || 10;
+
+        const allMemories = await redis.hgetall(`claude_mem:${projId}:memories`);
+        const memories: any[] = [];
+
+        const queryLower = query.toLowerCase();
+        const queryWords = queryLower.split(/\s+/);
+
+        for (const [id, data] of Object.entries(allMemories)) {
+          const mem = JSON.parse(data);
+
+          if (category && mem.category !== category) continue;
+          if (task_id && mem.task_id !== task_id) continue;
+
+          const contentLower = mem.content.toLowerCase();
+          const tagMatch = mem.tags?.some((t: string) => queryWords.some((w: string) => t.toLowerCase().includes(w)));
+          const contentMatch = queryWords.some((w: string) => contentLower.includes(w));
+
+          if (tagMatch || contentMatch) {
+            const matchScore = queryWords.filter((w: string) => contentLower.includes(w)).length;
+            memories.push({ ...mem, score: matchScore + (tagMatch ? 2 : 0) });
+          }
+        }
+
+        memories.sort((a, b) => b.score - a.score);
+        const results = memories.slice(0, maxResults);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                success: true,
+                query,
+                project_id: projId,
+                result_count: results.length,
+                memories: results,
+              }, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "ralph_memory_context": {
+        const { task_id, project_id } = validatedArgs as any;
+        const projId = project_id || process.env.RALPH_PROJECT_ID || "default";
+
+        const projectContext = await redis.hgetall(`claude_mem:${projId}:project_context`);
+        let taskContext = {};
+        let taskMemories: any[] = [];
+
+        if (task_id) {
+          taskContext = await redis.hgetall(`claude_mem:${projId}:task:${task_id}`) || {};
+
+          const handoffData = await redis.get(`claude_mem:${projId}:handoffs:${task_id}`);
+          if (handoffData) {
+            taskContext = { ...taskContext, handoff: JSON.parse(handoffData) };
+          }
+
+          const memoryIds = await redis.smembers(`claude_mem:${projId}:task:${task_id}:memories`);
+          if (memoryIds.length > 0) {
+            const allMem = await redis.hgetall(`claude_mem:${projId}:memories`);
+            taskMemories = memoryIds
+              .filter((id) => allMem[id])
+              .map((id) => JSON.parse(allMem[id]));
+          }
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                success: true,
+                project_id: projId,
+                project_context: projectContext,
+                task_id: task_id || null,
+                task_context: taskContext,
+                task_memories: taskMemories,
+              }, null, 2),
+            },
+          ],
+        };
+      }
+
+      case "ralph_memory_handoff": {
+        const { task_id, summary, next_steps, blockers, project_id } = validatedArgs as any;
+        const projId = project_id || process.env.RALPH_PROJECT_ID || "default";
+
+        const handoff = {
+          task_id,
+          summary,
+          next_steps: next_steps || [],
+          blockers: blockers || [],
+          handed_off_at: new Date().toISOString(),
+          handed_off_by: "claude-code",
+        };
+
+        await redis.set(`claude_mem:${projId}:handoffs:${task_id}`, JSON.stringify(handoff));
+
+        await redis.hset(`claude_mem:${projId}:task:${task_id}`, {
+          status: "handed_off",
+          summary,
+          handed_off_at: handoff.handed_off_at,
+        });
+
+        const learningMemory = {
+          id: `learn-${task_id}`,
+          content: `Task ${task_id}: ${summary}. Next: ${next_steps.join(", ")}`,
+          category: "learning",
+          tags: ["handoff", task_id],
+          task_id,
+          created_at: handoff.handed_off_at,
+          agent_id: "claude-code",
+        };
+        await redis.hset(`claude_mem:${projId}:memories`, learningMemory.id, JSON.stringify(learningMemory));
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                success: true,
+                task_id,
+                project_id: projId,
+                handoff_stored: true,
+              }),
+            },
+          ],
+        };
       }
 
       default:
