@@ -1,0 +1,3 @@
+# Ralph Wiggum - Python Dependencies
+redis>=4.5.0
+pyyaml>=6.0

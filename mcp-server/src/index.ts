@@ -72,6 +72,15 @@ async function runLibrarianCommand(
 
     let stdout = "";
     let stderr = "";
+    let settled = false;
+
+    const timeoutId = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        proc.kill();
+        reject(new Error(`Librarian command timed out after ${timeout}ms`));
+      }
+    }, timeout);
 
     proc.stdout.on("data", (data) => {
       stdout += data.toString();
@@ -82,17 +91,20 @@ async function runLibrarianCommand(
     });
 
     proc.on("close", (code) => {
-      resolve({ stdout, stderr, exitCode: code || 0 });
+      if (!settled) {
+        settled = true;
+        clearTimeout(timeoutId);
+        resolve({ stdout, stderr, exitCode: code || 0 });
+      }
     });
 
     proc.on("error", (err) => {
-      reject(err);
+      if (!settled) {
+        settled = true;
+        clearTimeout(timeoutId);
+        reject(err);
+      }
     });
-
-    setTimeout(() => {
-      proc.kill();
-      reject(new Error(`Librarian command timed out after ${timeout}ms`));
-    }, timeout);
   });
 }
 
@@ -677,6 +689,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   try {
+    // Validate args against schema if one exists
+    const schema = TOOLS[name];
+    const validatedArgs = schema ? schema.parse(args) : args;
+
     switch (name) {
       case "ralph_list_agents": {
         const agents = await redis.hgetall("ralph:agents");
@@ -700,7 +716,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "ralph_send_task": {
         const taskId = `task-${Date.now().toString(36)}`;
-        const dependencies = (args as any).dependencies || [];
+        const dependencies = (validatedArgs as any).dependencies || [];
 
         // Validate dependencies for cycles
         if (dependencies.length > 0) {
@@ -724,7 +740,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         const task = {
           id: taskId,
-          ...args,
+          ...validatedArgs,
           deps: dependencies,
           status: "pending",
           created_at: new Date().toISOString(),
@@ -733,12 +749,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         await redis.set(`ralph:tasks:data:${taskId}`, JSON.stringify(task));
 
-        const priority = (args as any).priority || 5;
+        const priority = (validatedArgs as any).priority || 5;
         const score = (10 - priority) * 1000000 + Date.now();
         await redis.zadd("ralph:tasks:queue", score, taskId);
 
         await redis.publish(
-          `ralph:messages:${(args as any).agent_id}`,
+          `ralph:messages:${(validatedArgs as any).agent_id}`,
           JSON.stringify({
             type: "new_task",
             task_id: taskId,
@@ -761,7 +777,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const taskId = `task-${Date.now().toString(36)}`;
         const task = {
           id: taskId,
-          ...args,
+          ...validatedArgs,
           status: "pending",
           created_at: new Date().toISOString(),
           created_by: "claude-code",
@@ -777,8 +793,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           JSON.stringify({
             type: "new_task_available",
             task_id: taskId,
-            task_type: (args as any).task_type,
-            target_type: (args as any).target_type,
+            task_type: (validatedArgs as any).task_type,
+            target_type: (validatedArgs as any).target_type,
             timestamp: new Date().toISOString(),
           })
         );
@@ -796,17 +812,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "ralph_get_status": {
         const result: any = {};
 
-        if ((args as any).agent_id) {
-          const agentData = await redis.hget("ralph:agents", (args as any).agent_id);
+        if ((validatedArgs as any).agent_id) {
+          const agentData = await redis.hget("ralph:agents", (validatedArgs as any).agent_id);
           if (agentData) {
             const agent = JSON.parse(agentData);
-            const isAlive = await redis.exists(`ralph:heartbeats:${(args as any).agent_id}`);
+            const isAlive = await redis.exists(`ralph:heartbeats:${(validatedArgs as any).agent_id}`);
             result.agent = { ...agent, is_alive: isAlive > 0 };
           }
         }
 
-        if ((args as any).task_id) {
-          const taskData = await redis.get(`ralph:tasks:data:${(args as any).task_id}`);
+        if ((validatedArgs as any).task_id) {
+          const taskData = await redis.get(`ralph:tasks:data:${(validatedArgs as any).task_id}`);
           if (taskData) {
             result.task = JSON.parse(taskData);
           }
@@ -823,7 +839,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "ralph_lock_file": {
-        const { file_path, agent_id, ttl } = args as any;
+        const { file_path, agent_id, ttl } = validatedArgs as any;
         const lockKey = `ralph:locks:file:${file_path.replace(/[/\\]/g, ":")}`;
 
         const lockData = JSON.stringify({
@@ -846,7 +862,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "ralph_unlock_file": {
-        const { file_path, agent_id } = args as any;
+        const { file_path, agent_id } = validatedArgs as any;
         const lockKey = `ralph:locks:file:${file_path.replace(/[/\\]/g, ":")}`;
 
         const existing = await redis.get(lockKey);
@@ -879,8 +895,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         for await (const key of redis.scanStream({ match: "ralph:artifacts:*" })) {
           const data = await redis.hgetall(key as string);
           if (data) {
-            if ((args as any).task_id && data.task_id !== (args as any).task_id) continue;
-            if ((args as any).agent_id && data.agent_id !== (args as any).agent_id) continue;
+            if ((validatedArgs as any).task_id && data.task_id !== (validatedArgs as any).task_id) continue;
+            if ((validatedArgs as any).agent_id && data.agent_id !== (validatedArgs as any).agent_id) continue;
             artifacts.push(data);
           }
         }
@@ -891,7 +907,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "ralph_send_message": {
-        const { target_agent, message_type, payload } = args as any;
+        const { target_agent, message_type, payload } = validatedArgs as any;
 
         const message = {
           type: message_type,
@@ -908,19 +924,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "ralph_get_queue": {
-        const { limit, status } = args as any;
+        const { limit, status } = validatedArgs as any;
         const taskIds = await redis.zrange("ralph:tasks:queue", 0, (limit || 20) - 1);
 
-        const tasks = [];
-        for (const id of taskIds) {
-          const data = await redis.get(`ralph:tasks:data:${id}`);
-          if (data) {
-            const task = JSON.parse(data);
-            if (!status || task.status === status) {
-              tasks.push(task);
-            }
-          }
+        if (taskIds.length === 0) {
+          return { content: [{ type: "text", text: "[]" }] };
         }
+
+        const keys = taskIds.map((id) => `ralph:tasks:data:${id}`);
+        const results = await redis.mget(...keys);
+
+        const tasks = results
+          .filter((data): data is string => data !== null)
+          .map((data) => JSON.parse(data))
+          .filter((task) => !status || task.status === status);
 
         return {
           content: [{ type: "text", text: JSON.stringify(tasks, null, 2) }],
@@ -928,7 +945,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "ralph_cancel_task": {
-        const { task_id } = args as any;
+        const { task_id } = validatedArgs as any;
         const taskData = await redis.get(`ralph:tasks:data:${task_id}`);
 
         if (taskData) {
@@ -949,7 +966,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "ralph_validate_deps": {
-        const { task_id, dependencies } = args as any;
+        const { task_id, dependencies } = validatedArgs as any;
         const validation = await validateDependencies(task_id, dependencies);
 
         return {
@@ -973,7 +990,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // =======================================================================
 
       case "librarian_search": {
-        const { query, library, mode, limit } = args as any;
+        const { query, library, mode, limit } = validatedArgs as any;
 
         try {
           const results = await librarianSearch(query, {
@@ -1053,7 +1070,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "librarian_get_document": {
-        const { library, doc_id, slice } = args as any;
+        const { library, doc_id, slice } = validatedArgs as any;
 
         try {
           const doc = await librarianGetDocument(library, doc_id, slice);
@@ -1097,7 +1114,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "librarian_search_api": {
-        const { api_name, library } = args as any;
+        const { api_name, library } = validatedArgs as any;
 
         try {
           const query = `${api_name} API reference usage example`;
@@ -1141,7 +1158,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "librarian_search_error": {
-        const { error_message, library } = args as any;
+        const { error_message, library } = validatedArgs as any;
 
         try {
           const query = `error ${error_message} solution fix troubleshooting`;
@@ -1186,7 +1203,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "librarian_find_library": {
-        const { name: libName } = args as any;
+        const { name: libName } = validatedArgs as any;
 
         try {
           const result = await runLibrarianCommand(["library", libName], 15000);
