@@ -20,6 +20,8 @@ from .security import (
 from .cleanup import OrphanCleaner, OrphanedTask
 from .streams import EventStream, StreamMessage
 from .constants import RedisKeys, TaskStatusConst, TaskTypeConst, Defaults
+from .telemetry import RalphMetrics, SimpleMetrics, MetricSnapshot, get_metrics, init_metrics
+from .tracing import Tracer, TaskTracer, Span, TraceContext, get_tracer, init_tracer
 
 __all__ = [
     'RalphClient',
@@ -48,6 +50,17 @@ __all__ = [
     'TaskStatusConst',
     'TaskTypeConst',
     'Defaults',
+    'RalphMetrics',
+    'SimpleMetrics',
+    'MetricSnapshot',
+    'get_metrics',
+    'init_metrics',
+    'Tracer',
+    'TaskTracer',
+    'Span',
+    'TraceContext',
+    'get_tracer',
+    'init_tracer',
 ]
 
 __version__ = '0.1.0'
