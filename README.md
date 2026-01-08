@@ -1,4 +1,8 @@
 <p align="center">
+  <img src="assets/ralph-vibe-coder.png" alt="Ralph Wiggum - I'm a Vibe Coder" width="200">
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/Status-Ready%20to%20Use-brightgreen?style=for-the-badge" alt="Status">
   <img src="https://img.shields.io/badge/Tests-93%20Passing-success?style=for-the-badge" alt="Tests">
   <img src="https://img.shields.io/badge/MCP%20Tools-18-blue?style=for-the-badge" alt="MCP Tools">
@@ -9,7 +13,7 @@
 <h3 align="center">Multi-Agent Autonomous Coding Platform</h3>
 
 <p align="center">
-  <i>"Me fail English? That's unpossible!"</i> — Ralph Wiggum
+  <i>"I'm a Vibe Coder!"</i> — Ralph Wiggum
 </p>
 
 <p align="center">
