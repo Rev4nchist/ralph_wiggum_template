@@ -50,10 +50,13 @@ class CrashableAgent:
     heartbeat_thread: Optional[threading.Thread] = None
 
     def start_heartbeat(self):
+        # Send first heartbeat immediately to ensure is_alive() works
+        self._send_heartbeat()
+
         def heartbeat_loop():
             while not self.crash_event.is_set() and self.state == AgentState.RUNNING:
-                self._send_heartbeat()
                 time.sleep(HEARTBEAT_TTL / 3)
+                self._send_heartbeat()
 
         self.heartbeat_thread = threading.Thread(target=heartbeat_loop, daemon=True)
         self.heartbeat_thread.start()

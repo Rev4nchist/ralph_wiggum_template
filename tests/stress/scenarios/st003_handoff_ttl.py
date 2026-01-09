@@ -23,8 +23,8 @@ from ..metrics import StressTestMetrics, MetricsCollector
 
 
 CHAIN_LENGTH = 5
-HANDOFF_TTL_SECONDS = 3  # Short TTL to ensure expiry during test
-AGENT_PROCESSING_SECONDS = 2
+HANDOFF_TTL_SECONDS = 1  # Very short TTL to ensure expiry during test
+AGENT_PROCESSING_SECONDS = 0.5
 
 
 @dataclass
@@ -224,7 +224,8 @@ class TestHandoffTTLExpiry:
             prev_task_id = f"{chain_id}-step-{step}"
 
             if step == 1:
-                time.sleep(HANDOFF_TTL_SECONDS + 1)
+                # Wait significantly longer than TTL to ensure handoff expires
+                time.sleep(HANDOFF_TTL_SECONDS + 3)
 
         final_metrics = metrics.finalize()
         final_metrics.print_summary()

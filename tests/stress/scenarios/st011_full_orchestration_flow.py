@@ -756,21 +756,28 @@ class TestFullOrchestrationFlow:
         project_id = f"{stress_test_id}:memory-share"
         memory_store = ProjectMemoryStore(redis_client, project_id)
 
-        memory_store.store_memory(
+        # Store memories
+        mem1_id = memory_store.store_memory(
             "arch-agent",
             "Use PostgreSQL for primary data store",
             "architecture",
             ["database", "decision"]
         )
-        memory_store.store_memory(
+        mem2_id = memory_store.store_memory(
             "arch-agent",
             "Redis for caching and session storage",
             "architecture",
             ["cache", "session"]
         )
 
-        backend_recall = memory_store.recall_memories("PostgreSQL")
-        assert len(backend_recall) > 0, "Backend should recall database decision"
+        # Verify memories were stored
+        all_memories = redis_client.hgetall(memory_store.memories_key)
+        assert len(all_memories) >= 2, f"Expected 2+ memories stored, got {len(all_memories)}"
+
+        # Test recall with partial match
+        backend_recall = memory_store.recall_memories("postgresql")
+        assert len(backend_recall) > 0, \
+            f"Backend should recall database decision. All memories: {list(all_memories.values())}"
 
         frontend_recall = memory_store.recall_memories("session")
         assert len(frontend_recall) > 0, "Frontend should recall session decision"
