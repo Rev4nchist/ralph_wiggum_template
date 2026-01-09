@@ -4,7 +4,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-Ready%20to%20Use-brightgreen?style=for-the-badge" alt="Status">
-  <img src="https://img.shields.io/badge/Tests-482%20Passing-success?style=for-the-badge" alt="Tests">
+  <img src="https://img.shields.io/badge/Tests-542%20Passing-success?style=for-the-badge" alt="Tests">
   <img src="https://img.shields.io/badge/MCP%20Tools-18-blue?style=for-the-badge" alt="MCP Tools">
   <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="License">
 </p>
@@ -200,8 +200,11 @@ Add to your `~/.mcp.json`:
 ### 5️⃣ Verify Installation
 
 ```bash
-# Run all 482 tests
+# Run all 542 tests
 npm test && python -m pytest tests/ -v
+
+# Run stress tests only (requires Redis)
+python -m pytest tests/stress/ -v
 ```
 
 **You're ready!** Open Claude Code and try: `Use ralph_list_agents to see active agents`
@@ -227,8 +230,8 @@ Pre-built agent personas for different development phases:
 
 <table>
 <tr>
-<td align="center"><h1>482</h1><p>Tests Passing</p></td>
-<td align="center"><h1>164</h1><p>New Tests Added</p></td>
+<td align="center"><h1>542</h1><p>Tests Passing</p></td>
+<td align="center"><h1>60</h1><p>Stress Tests</p></td>
 <td align="center"><h1>0</h1><p>Known Race Conditions</p></td>
 </tr>
 </table>
@@ -244,6 +247,26 @@ Pre-built agent personas for different development phases:
 | Hook System | 51 | Automation triggers tested |
 | Memory System | 35 | Agent persistence verified |
 | Telegram Scripts | 25 | Notification flow validated |
+| **Stress Tests** | **60** | **Production-scale validation** |
+
+### 🔥 Stress Test Suite (ST-001 to ST-011)
+
+Validates system behavior under **100+ concurrent agents** and **500+ tasks**:
+
+| Test | Scenario | What It Proves |
+|------|----------|----------------|
+| ST-001 | 10 agents × 100 memories | Memory coherence under load |
+| ST-002 | 100 agents, 10 files | Lock contention fairness |
+| ST-003 | Handoff chain TTL expiry | Context recovery works |
+| ST-004 | Kill 50% of agents | Orphan task recovery |
+| ST-005 | 100-500 task DAGs | Linear scaling O(V+E) |
+| ST-007 | 1000 memories | p99 recall < 500ms |
+| ST-008 | Wave boundary races | No premature starts |
+| ST-009 | Malformed agent data | Byzantine fault tolerance |
+| ST-010 | Conflicting decisions | All conflicts preserved |
+| ST-011 | **Full orchestration** | **End-to-end workflow** |
+
+Run stress tests: `python -m pytest tests/stress/ -v`
 
 ---
 
@@ -268,7 +291,11 @@ ralph_wiggum_template/
 │   ├── notify.sh               # Telegram notifications
 │   └── check-response.sh       # Poll for human responses
 │
-├── 🧪 tests/                   # 93 tests (Python + TypeScript)
+├── 🧪 tests/
+│   ├── unit/                   # Unit tests
+│   ├── integration/            # Integration tests
+│   └── stress/                 # 60 stress tests (ST-001 to ST-011)
+│       └── scenarios/          # Production-scale validation
 │
 └── 🐳 docker-compose.yml       # Redis + services
 ```
