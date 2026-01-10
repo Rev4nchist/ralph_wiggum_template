@@ -1,13 +1,68 @@
 """Main Ralph Agent Client - Central coordination hub"""
 
 import os
+import sys
 import json
 import time
+import random
 import threading
 from typing import Optional, Dict, Any, Callable, List
 from datetime import datetime
 
 import redis
+from redis.exceptions import ConnectionError as RedisConnectionError, TimeoutError as RedisTimeoutError
+
+
+class RedisStartupError(Exception):
+    """Failed to connect to Redis after all retries."""
+    pass
+
+
+def create_redis_client(
+    redis_url: str,
+    max_retries: int = 5,
+    base_delay: float = 1.0,
+    max_delay: float = 30.0
+) -> redis.Redis:
+    """Create Redis client with exponential backoff retry.
+
+    Args:
+        redis_url: Redis connection URL
+        max_retries: Maximum connection attempts (default 5)
+        base_delay: Initial delay between retries in seconds
+        max_delay: Maximum delay cap in seconds
+
+    Returns:
+        Connected Redis client
+
+    Raises:
+        RedisStartupError: If connection fails after all retries
+    """
+    last_error = None
+
+    for attempt in range(max_retries):
+        try:
+            client = redis.from_url(redis_url, decode_responses=True)
+            client.ping()
+            return client
+        except (RedisConnectionError, RedisTimeoutError, OSError) as e:
+            last_error = e
+            delay = min(base_delay * (2 ** attempt), max_delay)
+            jitter = delay * 0.25 * (2 * random.random() - 1)
+            actual_delay = delay + jitter
+
+            print(
+                f"Redis connection failed (attempt {attempt + 1}/{max_retries}): {e}",
+                file=sys.stderr
+            )
+
+            if attempt < max_retries - 1:
+                print(f"Retrying in {actual_delay:.1f}s...", file=sys.stderr)
+                time.sleep(actual_delay)
+
+    raise RedisStartupError(
+        f"Failed to connect to Redis at {redis_url} after {max_retries} attempts: {last_error}"
+    )
 
 from .registry import AgentRegistry
 from .locks import FileLock
@@ -40,7 +95,7 @@ class RalphClient:
         self.agent_type = agent_type or os.environ.get('RALPH_AGENT_TYPE', 'general')
         self.redis_url = redis_url or os.environ.get('REDIS_URL', 'redis://localhost:6379')
 
-        self.redis = redis.from_url(self.redis_url, decode_responses=True)
+        self.redis = create_redis_client(self.redis_url)
         self.registry = AgentRegistry(self.redis)
         self.task_queue = TaskQueue(self.redis, self.agent_id)
         self.file_lock = FileLock(self.redis, self.agent_id)
@@ -217,6 +272,24 @@ class RalphClient:
             'level': level,
             'timestamp': datetime.utcnow().isoformat()
         }))
+
+    def get_telegram_response(self, timeout: int = 30) -> Optional[str]:
+        """Retrieve response from Telegram question notification.
+
+        Args:
+            timeout: Maximum seconds to wait for response
+
+        Returns:
+            Response text if received, None if timeout
+        """
+        key = f"ralph:telegram:response:{self.agent_id}"
+        for _ in range(timeout):
+            response = self.redis.get(key)
+            if response:
+                self.redis.delete(key)
+                return response
+            time.sleep(1)
+        return None
 
     def log_progress(self, task_id: str, message: str) -> None:
         """Log progress for a task."""

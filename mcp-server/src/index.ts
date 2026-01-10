@@ -372,21 +372,51 @@ async function validateDependencies(
   return { valid: true };
 }
 
-redis = new Redis(REDIS_URL, {
-  retryStrategy(times) {
-    const delay = Math.min(times * 100, 3000);
-    console.error(`Redis reconnecting, attempt ${times}, delay ${delay}ms`);
-    return delay;
-  },
-  maxRetriesPerRequest: 3,
-  reconnectOnError(err) {
-    return err.message.includes('READONLY');
-  }
-});
+async function createRedisClient(url: string, maxRetries = 5): Promise<Redis> {
+  let lastError: Error | null = null;
 
-redis.on('error', (err) => console.error('Redis error:', err));
-redis.on('reconnecting', () => console.log('Reconnecting to Redis...'));
-redis.on('connect', () => console.log('Redis connected'));
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const client = new Redis(url, {
+        retryStrategy(times) {
+          const delay = Math.min(times * 100, 3000);
+          console.error(`Redis reconnecting, attempt ${times}, delay ${delay}ms`);
+          return delay;
+        },
+        maxRetriesPerRequest: 3,
+        reconnectOnError(err) {
+          return err.message.includes('READONLY');
+        },
+        lazyConnect: true,
+        connectTimeout: 10000,
+      });
+
+      await client.connect();
+      await client.ping();
+      console.error(`Redis connected to ${url}`);
+
+      client.on('error', (err) => console.error('Redis error:', err));
+      client.on('reconnecting', () => console.error('Reconnecting to Redis...'));
+
+      return client;
+    } catch (err: any) {
+      lastError = err;
+      const delay = Math.min(1000 * Math.pow(2, attempt), 30000);
+      console.error(
+        `Redis connection failed (attempt ${attempt + 1}/${maxRetries}): ${err.message}`
+      );
+
+      if (attempt < maxRetries - 1) {
+        console.error(`Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  throw new Error(
+    `Failed to connect to Redis at ${url} after ${maxRetries} attempts: ${lastError?.message}`
+  );
+}
 
 const server = new Server(
   {
@@ -1116,6 +1146,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // =======================================================================
 
       case "librarian_search": {
+        if (!librarianAvailable) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                success: false,
+                error: "Librarian is not available. Install with: npm install -g @iannuttall/librarian",
+                hint: "Set LIBRARIAN_PATH environment variable if installed in a custom location"
+              })
+            }],
+            isError: true
+          };
+        }
+
         const { query, library, mode, limit } = validatedArgs as any;
 
         try {
@@ -1161,6 +1205,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "librarian_list_sources": {
+        if (!librarianAvailable) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                success: false,
+                error: "Librarian is not available. Install with: npm install -g @iannuttall/librarian",
+                hint: "Set LIBRARIAN_PATH environment variable if installed in a custom location"
+              })
+            }],
+            isError: true
+          };
+        }
+
         try {
           const sources = await librarianListSources();
 
@@ -1196,6 +1254,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "librarian_get_document": {
+        if (!librarianAvailable) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                success: false,
+                error: "Librarian is not available. Install with: npm install -g @iannuttall/librarian",
+                hint: "Set LIBRARIAN_PATH environment variable if installed in a custom location"
+              })
+            }],
+            isError: true
+          };
+        }
+
         const { library, doc_id, slice } = validatedArgs as any;
 
         try {
@@ -1240,6 +1312,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "librarian_search_api": {
+        if (!librarianAvailable) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                success: false,
+                error: "Librarian is not available. Install with: npm install -g @iannuttall/librarian",
+                hint: "Set LIBRARIAN_PATH environment variable if installed in a custom location"
+              })
+            }],
+            isError: true
+          };
+        }
+
         const { api_name, library } = validatedArgs as any;
 
         try {
@@ -1284,6 +1370,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "librarian_search_error": {
+        if (!librarianAvailable) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                success: false,
+                error: "Librarian is not available. Install with: npm install -g @iannuttall/librarian",
+                hint: "Set LIBRARIAN_PATH environment variable if installed in a custom location"
+              })
+            }],
+            isError: true
+          };
+        }
+
         const { error_message, library } = validatedArgs as any;
 
         try {
@@ -1329,6 +1429,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "librarian_find_library": {
+        if (!librarianAvailable) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                success: false,
+                error: "Librarian is not available. Install with: npm install -g @iannuttall/librarian",
+                hint: "Set LIBRARIAN_PATH environment variable if installed in a custom location"
+              })
+            }],
+            isError: true
+          };
+        }
+
         const { name: libName } = validatedArgs as any;
 
         try {
@@ -1575,7 +1689,44 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
+let librarianAvailable = false;
+
+async function checkLibrarianAvailability(): Promise<boolean> {
+  try {
+    const result = await runLibrarianCommand(["--version"], 10000);
+    if (result.exitCode === 0) {
+      const version = result.stdout.trim().split("\n")[0];
+      console.error(`Librarian available: ${version}`);
+      return true;
+    }
+    console.error(`Librarian check failed with exit code ${result.exitCode}`);
+    return false;
+  } catch (err: any) {
+    if (err.code === "ENOENT") {
+      console.error(`Librarian not found at path: ${LIBRARIAN_PATH}`);
+    } else {
+      console.error(`Librarian unavailable: ${err.message}`);
+    }
+    return false;
+  }
+}
+
 async function main() {
+  try {
+    redis = await createRedisClient(REDIS_URL);
+  } catch (err: any) {
+    console.error(`FATAL: ${err.message}`);
+    process.exit(1);
+  }
+
+  librarianAvailable = await checkLibrarianAvailability();
+  if (!librarianAvailable) {
+    console.error(
+      "WARNING: Librarian unavailable. Documentation search tools will return errors. " +
+      "Install with: npm install -g @iannuttall/librarian"
+    );
+  }
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("Ralph MCP Server running on stdio");

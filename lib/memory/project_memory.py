@@ -7,11 +7,28 @@ persistent memories that survive across sessions.
 import json
 import os
 import subprocess
+import sys
+import time
 import uuid
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 
 from .memory_protocol import Memory, MemoryQuery, MemoryCategory, MemoryScope
+
+
+class ClaudeMemError(Exception):
+    """Base exception for Claude-Mem operations."""
+    pass
+
+
+class ClaudeMemTimeout(ClaudeMemError):
+    """Claude-Mem command timed out."""
+    pass
+
+
+class ClaudeMemUnavailable(ClaudeMemError):
+    """Claude-Mem CLI not available."""
+    pass
 
 
 class ProjectMemory:
@@ -31,34 +48,90 @@ class ProjectMemory:
         self.agent_id = agent_id or os.environ.get('RALPH_AGENT_ID', 'unknown')
         self.redis = redis_client
 
-    def _claude_mem_cmd(self, action: str, data: Dict) -> Optional[Dict]:
-        """Execute Claude-Mem command via MCP or CLI."""
-        try:
-            if action == "store":
-                cmd = [
-                    "npx", "-y", "@anthropic-ai/claude-mem-mcp",
-                    "store",
-                    "--content", data.get("content", ""),
-                    "--tags", ",".join(data.get("tags", []))
-                ]
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-                return {"success": result.returncode == 0}
+    def _claude_mem_cmd(
+        self,
+        action: str,
+        data: Dict,
+        retries: int = 2,
+        silent: bool = False
+    ) -> Optional[Dict]:
+        """Execute Claude-Mem command with retry and error categorization.
 
-            elif action == "search":
-                cmd = [
-                    "npx", "-y", "@anthropic-ai/claude-mem-mcp",
-                    "search",
-                    "--query", data.get("query", ""),
-                    "--limit", str(data.get("limit", 10))
-                ]
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-                if result.returncode == 0:
-                    return json.loads(result.stdout) if result.stdout else {"results": []}
+        Args:
+            action: "store" or "search"
+            data: Command-specific data
+            retries: Number of retry attempts (default 2)
+            silent: If True, suppress exceptions and return None
 
-        except Exception as e:
-            print(f"Claude-Mem error: {e}")
+        Returns:
+            Command result dict or None on failure
 
+        Raises:
+            ClaudeMemTimeout: If command times out
+            ClaudeMemUnavailable: If CLI not found
+            ClaudeMemError: For other errors
+        """
+        last_error: Optional[Exception] = None
+
+        for attempt in range(retries + 1):
+            try:
+                if action == "store":
+                    cmd = [
+                        "npx", "-y", "@anthropic-ai/claude-mem-mcp",
+                        "store",
+                        "--content", data.get("content", ""),
+                        "--tags", ",".join(data.get("tags", []))
+                    ]
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                    return {"success": result.returncode == 0}
+
+                elif action == "search":
+                    cmd = [
+                        "npx", "-y", "@anthropic-ai/claude-mem-mcp",
+                        "search",
+                        "--query", data.get("query", ""),
+                        "--limit", str(data.get("limit", 10))
+                    ]
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                    if result.returncode == 0:
+                        return json.loads(result.stdout) if result.stdout else {"results": []}
+                    last_error = ClaudeMemError(f"Command failed with code {result.returncode}: {result.stderr}")
+
+            except subprocess.TimeoutExpired:
+                last_error = ClaudeMemTimeout(f"Timeout after 30s: {action}")
+                self._log_error("timeout", action, attempt, str(last_error))
+            except FileNotFoundError:
+                last_error = ClaudeMemUnavailable("npx or claude-mem not found")
+                self._log_error("unavailable", action, attempt, str(last_error))
+                break  # Don't retry if CLI missing
+            except json.JSONDecodeError as e:
+                last_error = ClaudeMemError(f"Invalid JSON response: {e}")
+                self._log_error("parse_error", action, attempt, str(last_error))
+            except Exception as e:
+                last_error = ClaudeMemError(str(e))
+                self._log_error("unknown", action, attempt, str(last_error))
+
+            if attempt < retries:
+                time.sleep(0.5 * (2 ** attempt))
+
+        if not silent and last_error:
+            raise last_error
         return None
+
+    def _log_error(self, error_type: str, action: str, attempt: int, message: str) -> None:
+        """Structured error logging."""
+        log_entry = {
+            "level": "error",
+            "component": "claude_mem",
+            "error_type": error_type,
+            "action": action,
+            "attempt": attempt + 1,
+            "message": message,
+            "timestamp": datetime.utcnow().isoformat(),
+            "project_id": self.project_id,
+            "agent_id": self.agent_id
+        }
+        print(json.dumps(log_entry), file=sys.stderr)
 
     def remember(
         self,
@@ -105,7 +178,7 @@ Time: {datetime.utcnow().isoformat()}
         self._claude_mem_cmd("store", {
             "content": full_content,
             "tags": all_tags
-        })
+        }, silent=True)  # Silent for backward compatibility
 
         if self.redis:
             memory_data = {
@@ -134,7 +207,8 @@ Time: {datetime.utcnow().isoformat()}
         category: Optional[str] = None,
         scope: Optional[str] = None,
         task_id: Optional[str] = None,
-        limit: int = 10
+        limit: int = 10,
+        use_cache_fallback: bool = True
     ) -> List[Memory]:
         """Recall relevant memories.
 
@@ -144,6 +218,7 @@ Time: {datetime.utcnow().isoformat()}
             scope: Filter by scope
             task_id: Filter by task
             limit: Maximum memories to return
+            use_cache_fallback: Fall back to Redis cache if Claude-Mem fails
 
         Returns:
             List of relevant memories
@@ -154,24 +229,73 @@ Time: {datetime.utcnow().isoformat()}
         if task_id:
             search_query += f" task:{task_id}"
 
-        result = self._claude_mem_cmd("search", {
-            "query": search_query,
-            "limit": limit
-        })
+        try:
+            result = self._claude_mem_cmd("search", {
+                "query": search_query,
+                "limit": limit
+            }, silent=use_cache_fallback)
 
-        memories = []
-        if result and "results" in result:
-            for r in result["results"]:
-                memories.append(Memory(
-                    id=r.get("id", "unknown"),
-                    content=r.get("content", ""),
-                    category=category or "unknown",
-                    scope=scope or "project",
+            memories = []
+            if result and "results" in result:
+                for r in result["results"]:
+                    memories.append(Memory(
+                        id=r.get("id", "unknown"),
+                        content=r.get("content", ""),
+                        category=category or "unknown",
+                        scope=scope or "project",
+                        project_id=self.project_id,
+                        relevance_score=r.get("score", 0.0)
+                    ))
+                return memories
+
+        except (ClaudeMemTimeout, ClaudeMemUnavailable):
+            if use_cache_fallback and self.redis:
+                return self._recall_from_redis_cache(query, category, task_id, limit)
+            raise
+
+        # If result was None (silent mode), try Redis fallback
+        if use_cache_fallback and self.redis:
+            return self._recall_from_redis_cache(query, category, task_id, limit)
+
+        return []
+
+    def _recall_from_redis_cache(
+        self,
+        query: str,
+        category: Optional[str],
+        task_id: Optional[str],
+        limit: int
+    ) -> List[Memory]:
+        """Fallback recall from Redis cache when Claude-Mem unavailable."""
+        all_memories = self.redis.hgetall(f"ralph:memory:{self.project_id}")
+        matches = []
+        query_lower = query.lower()
+
+        for mem_id, mem_json in all_memories.items():
+            try:
+                mem_data = json.loads(mem_json)
+            except json.JSONDecodeError:
+                continue
+
+            if category and mem_data.get("category") != category:
+                continue
+            if task_id and mem_data.get("task_id") != task_id:
+                continue
+
+            content_lower = mem_data.get("content", "").lower()
+            if query_lower in content_lower or any(
+                word in content_lower for word in query_lower.split()
+            ):
+                matches.append(Memory(
+                    id=mem_data.get("id", mem_id),
+                    content=mem_data.get("content", ""),
+                    category=mem_data.get("category", "unknown"),
+                    scope=mem_data.get("scope", "project"),
                     project_id=self.project_id,
-                    relevance_score=r.get("score", 0.0)
+                    relevance_score=0.5  # Lower score for cache results
                 ))
 
-        return memories
+        return matches[:limit]
 
     def note_architecture(self, decision: str, rationale: str, alternatives: Optional[List[str]] = None) -> str:
         """Record an architectural decision.

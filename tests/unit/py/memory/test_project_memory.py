@@ -10,7 +10,9 @@ import pytest
 from lib.memory.memory_protocol import (
     Memory, MemoryQuery, MemoryCategory, MemoryScope, MemoryProtocol
 )
-from lib.memory.project_memory import ProjectMemory
+from lib.memory.project_memory import (
+    ProjectMemory, ClaudeMemError, ClaudeMemTimeout, ClaudeMemUnavailable
+)
 
 
 class TestMemory:
@@ -226,19 +228,39 @@ class TestClaudeMemCmd:
         assert result == {"results": []}
 
     @patch('lib.memory.project_memory.subprocess.run')
-    def test_command_timeout(self, mock_run, memory):
+    @patch('lib.memory.project_memory.time.sleep')
+    def test_command_timeout(self, mock_sleep, mock_run, memory):
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="npx", timeout=30)
 
-        result = memory._claude_mem_cmd("store", {"content": "test", "tags": []})
+        # Default behavior raises exception
+        with pytest.raises(ClaudeMemTimeout):
+            memory._claude_mem_cmd("store", {"content": "test", "tags": []})
 
+    @patch('lib.memory.project_memory.subprocess.run')
+    @patch('lib.memory.project_memory.time.sleep')
+    def test_command_timeout_silent(self, mock_sleep, mock_run, memory):
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="npx", timeout=30)
+
+        # Silent mode returns None
+        result = memory._claude_mem_cmd("store", {"content": "test", "tags": []}, silent=True)
         assert result is None
 
     @patch('lib.memory.project_memory.subprocess.run')
-    def test_command_exception(self, mock_run, memory):
+    @patch('lib.memory.project_memory.time.sleep')
+    def test_command_exception(self, mock_sleep, mock_run, memory):
         mock_run.side_effect = Exception("Command failed")
 
-        result = memory._claude_mem_cmd("store", {"content": "test", "tags": []})
+        # Default behavior raises exception
+        with pytest.raises(ClaudeMemError):
+            memory._claude_mem_cmd("store", {"content": "test", "tags": []})
 
+    @patch('lib.memory.project_memory.subprocess.run')
+    @patch('lib.memory.project_memory.time.sleep')
+    def test_command_exception_silent(self, mock_sleep, mock_run, memory):
+        mock_run.side_effect = Exception("Command failed")
+
+        # Silent mode returns None
+        result = memory._claude_mem_cmd("store", {"content": "test", "tags": []}, silent=True)
         assert result is None
 
 
