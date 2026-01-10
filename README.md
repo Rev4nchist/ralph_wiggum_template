@@ -4,7 +4,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-Ready%20to%20Use-brightgreen?style=for-the-badge" alt="Status">
-  <img src="https://img.shields.io/badge/Tests-649%20Passing-success?style=for-the-badge" alt="Tests">
+  <img src="https://img.shields.io/badge/Tests-651%20Passing-success?style=for-the-badge" alt="Tests">
   <img src="https://img.shields.io/badge/MCP%20Tools-18-blue?style=for-the-badge" alt="MCP Tools">
   <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="License">
 </p>
@@ -144,6 +144,18 @@
 
 **Bot:** [@ralph_wiggum_template_bot](https://t.me/ralph_wiggum_template_bot)
 
+**Queue Consumer:** For automated processing of Telegram notifications from agents:
+
+```bash
+# Start the queue consumer daemon
+python -m telegram_worker
+
+# With custom settings
+REDIS_URL=redis://localhost:6379 TELEGRAM_SCRIPTS_DIR=./plans python -m telegram_worker
+```
+
+The consumer bridges `ralph:telegram:queue` → shell scripts, enabling true human-in-the-loop workflows.
+
 </details>
 
 ---
@@ -200,11 +212,19 @@ Add to your `~/.mcp.json`:
 ### 5️⃣ Verify Installation
 
 ```bash
-# Run all 649 tests
+# Run all 651 tests
 npm test && python -m pytest tests/ -v
 
 # Run stress tests only (requires Redis)
 python -m pytest tests/stress/ -v
+```
+
+### 6️⃣ Start Telegram Consumer (Optional)
+
+If using Telegram notifications for human-in-the-loop workflows:
+
+```bash
+python -m telegram_worker
 ```
 
 **You're ready!** Open Claude Code and try: `Use ralph_list_agents to see active agents`
@@ -230,7 +250,7 @@ Pre-built agent personas for different development phases:
 
 <table>
 <tr>
-<td align="center"><h1>649</h1><p>Tests Passing</p></td>
+<td align="center"><h1>651</h1><p>Tests Passing</p></td>
 <td align="center"><h1>66</h1><p>Stress Tests</p></td>
 <td align="center"><h1>0</h1><p>Known Race Conditions</p></td>
 </tr>
@@ -245,7 +265,7 @@ Pre-built agent personas for different development phases:
 | Task Queue Ops | 10 | Reliable task lifecycle |
 | MCP Server Tools | 53 | All 17 tools validated |
 | Hook System | 51 | Automation triggers tested |
-| Memory System | 35 | Agent persistence verified |
+| Memory System | 37 | Agent persistence + error handling verified |
 | Telegram Scripts | 25 | Notification flow validated |
 | **Stress Tests** | **66** | **Production-scale validation** |
 
@@ -281,7 +301,8 @@ ralph_wiggum_template/
 │   ├── ralph-client/           # Python coordination (tasks, locks, registry)
 │   ├── hooks/                  # Automation hooks (pre-commit, post-edit)
 │   ├── memory/                 # Persistent memory across sessions
-│   └── librarian/              # Documentation search wrapper
+│   ├── librarian/              # Documentation search wrapper
+│   └── telegram-worker/        # Queue consumer daemon for notifications
 │
 ├── 📋 templates/
 │   ├── agent-CLAUDE.md         # Base agent instructions
@@ -312,6 +333,8 @@ docker-compose ps redis          # Check if running
 docker-compose restart redis     # Restart it
 docker-compose logs redis        # Check logs
 ```
+
+**Note:** The MCP server and Python client will retry connections 5 times with exponential backoff before failing. Check stderr for retry messages.
 </details>
 
 <details>
@@ -333,6 +356,29 @@ redis-cli DEL "ralph:locks:file:/path/to/file"   # Force release
 </details>
 
 <details>
+<summary><b>Librarian tools returning errors</b></summary>
+
+Check MCP server startup logs for:
+```
+WARNING: Librarian unavailable. Documentation search tools will return errors.
+Install with: npm install -g @iannuttall/librarian
+```
+
+Or set a custom path: `LIBRARIAN_PATH=/custom/path/librarian`
+</details>
+
+<details>
+<summary><b>Memory not persisting (Claude-Mem issues)</b></summary>
+
+If Claude-Mem is unavailable, the system automatically falls back to Redis cache for memory operations. Check stderr for:
+```json
+{"level": "error", "component": "claude_mem", "error_type": "unavailable", ...}
+```
+
+Memories stored in Redis can still be recalled, but with lower relevance scores.
+</details>
+
+<details>
 <summary><b>Telegram not working</b></summary>
 
 ```bash
@@ -341,6 +387,20 @@ curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe"
 
 # Send test message
 ./plans/notify.sh "status" "Test message"
+```
+</details>
+
+<details>
+<summary><b>Telegram queue not processing</b></summary>
+
+Ensure the queue consumer daemon is running:
+```bash
+python -m telegram_worker
+```
+
+Check if messages are queued:
+```bash
+redis-cli LLEN ralph:telegram:queue
 ```
 </details>
 
