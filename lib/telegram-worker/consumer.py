@@ -9,13 +9,13 @@ import sys
 from pathlib import Path
 from typing import Dict, Optional
 
-# Import from ralph-client (hyphenated directory name)
-_client_path = Path(__file__).parent.parent / "ralph-client" / "client.py"
-_spec = importlib.util.spec_from_file_location("ralph_client", _client_path)
-_ralph_client = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_ralph_client)
-create_redis_client = _ralph_client.create_redis_client
-RedisStartupError = _ralph_client.RedisStartupError
+# Import from ralph-client/redis_factory (standalone, no relative imports)
+_factory_path = Path(__file__).parent.parent / "ralph-client" / "redis_factory.py"
+_spec = importlib.util.spec_from_file_location("redis_factory", _factory_path)
+_factory_module = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_factory_module)
+create_redis_client = _factory_module.create_redis_client
+RedisStartupError = _factory_module.RedisStartupError
 
 
 class TelegramQueueConsumer:

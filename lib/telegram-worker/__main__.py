@@ -8,10 +8,18 @@ Environment variables:
     TELEGRAM_SCRIPTS_DIR: Directory containing notify.sh and wait-response.sh (default: ./plans)
 """
 
+import importlib.util
 import os
 import sys
+from pathlib import Path
 
-from .consumer import TelegramQueueConsumer
+# Load consumer module (uses importlib.util to avoid relative import issues)
+_this_dir = Path(__file__).parent
+_consumer_path = _this_dir / "consumer.py"
+_spec = importlib.util.spec_from_file_location("consumer", _consumer_path)
+_consumer_module = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_consumer_module)
+TelegramQueueConsumer = _consumer_module.TelegramQueueConsumer
 
 
 def main() -> None:

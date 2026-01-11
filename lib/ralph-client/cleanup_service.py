@@ -20,15 +20,17 @@ from pathlib import Path
 
 # Handle imports for both direct execution and Docker
 _this_dir = Path(__file__).parent
-_client_path = _this_dir / "client.py"
+
+# Load redis_factory (standalone, no relative imports)
+_factory_path = _this_dir / "redis_factory.py"
+_spec = importlib.util.spec_from_file_location("redis_factory", _factory_path)
+_factory_module = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_factory_module)
+create_redis_client = _factory_module.create_redis_client
+RedisStartupError = _factory_module.RedisStartupError
+
+# Load cleanup module (standalone, no relative imports)
 _cleanup_path = _this_dir / "cleanup.py"
-
-_spec = importlib.util.spec_from_file_location("ralph_client", _client_path)
-_client_module = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_client_module)
-create_redis_client = _client_module.create_redis_client
-RedisStartupError = _client_module.RedisStartupError
-
 _spec2 = importlib.util.spec_from_file_location("cleanup", _cleanup_path)
 _cleanup_module = importlib.util.module_from_spec(_spec2)
 _spec2.loader.exec_module(_cleanup_module)

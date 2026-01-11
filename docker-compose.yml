@@ -1,8 +1,6 @@
 # Ralph Wiggum Multi-Agent Orchestration
 # Phase 1: Infrastructure with Redis message bus
 
-version: '3.8'
-
 services:
   # Redis - Central message bus for agent coordination
   redis:
@@ -31,7 +29,8 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379
       - CLEANUP_INTERVAL=60
-    command: python lib/ralph-client/cleanup_service.py
+    entrypoint: ["/bin/bash", "-c"]
+    command: ["python3 -m venv /tmp/venv && /tmp/venv/bin/pip install redis && /tmp/venv/bin/python /app/lib/ralph-client/cleanup_service.py"]
     working_dir: /app
     volumes:
       - .:/app:ro
@@ -42,11 +41,11 @@ services:
       - ralph-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import redis; r=redis.from_url('redis://redis:6379'); r.ping()"]
+      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.connect(('redis', 6379)); s.close()"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 30s
 
   # Telegram Queue Consumer - Processes notification queue
   telegram-consumer:
@@ -59,10 +58,11 @@ services:
       - TELEGRAM_SCRIPTS_DIR=/app/plans
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
-    command: python lib/telegram-worker/__main__.py
+    entrypoint: ["/bin/bash", "-c"]
+    command: ["python3 -m venv /tmp/venv && /tmp/venv/bin/pip install redis && /tmp/venv/bin/python /app/lib/telegram-worker/__main__.py"]
     working_dir: /app
     volumes:
-      - .:/app:ro
+      - .:/app
     depends_on:
       redis:
         condition: service_healthy
@@ -70,11 +70,11 @@ services:
       - ralph-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import redis; r=redis.from_url('redis://redis:6379'); r.ping()"]
+      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.connect(('redis', 6379)); s.close()"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 30s
 
   # Agent 1: Frontend specialist
   agent-frontend:
